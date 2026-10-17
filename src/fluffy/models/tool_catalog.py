@@ -1,0 +1,228 @@
+"""Inference-side view of the Part 1 tool contract.
+
+The canonical registry (handlers, home config, schema export) belongs to
+Part 1. This catalog is the subset a decision call needs: names, argument
+checks, action class, and the function schemas sent to Perceptron.
+"""
+
+import json
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, ValidationError, create_model
+
+ActionClass = Literal["comfort", "notify", "safety", "meta"]
+
+
+class ToolError(Exception):
+    def __init__(self, name: str, detail: str) -> None:
+        self.name = name
+        self.detail = detail
+        super().__init__(f"{name}: {detail}")
+
+
+class DimLightsArgs(BaseModel):
+    room: Literal["living_room"]
+    luminosity: int = Field(ge=0, le=100)
+    light: Literal["lamp.living_floor", "light.living_ceiling"] | None = None
+
+
+class SetLightWarmthArgs(BaseModel):
+    room: Literal["living_room"]
+    warmth: Literal["warm", "neutral", "cool"]
+
+
+class SetBlindsArgs(BaseModel):
+    room: Literal["living_room"]
+    position: int = Field(ge=0, le=100)
+
+
+class PlaySoundArgs(BaseModel):
+    sound: Literal["rain", "chime", "white_noise", "doorbell"]
+    room: Literal["living_room"]
+    volume: int = Field(ge=0, le=100)
+
+
+class StopSoundArgs(BaseModel):
+    room: Literal["living_room"]
+
+
+class FlashLightsArgs(BaseModel):
+    room: Literal["living_room"]
+    color: Literal["blue", "red", "amber", "white"]
+    pattern: Literal["pulse1", "pulse3", "strobe"]
+    duration_s: int = Field(ge=1, le=10)
+
+
+class ShowCaptionArgs(BaseModel):
+    text: str = Field(max_length=140)
+    size: Literal["large", "xl"]
+    priority: Literal["normal", "high"]
+
+
+class AnnounceArgs(BaseModel):
+    text: str
+    room: Literal["living_room"]
+
+
+class AlertCaregiverArgs(BaseModel):
+    severity: Literal["info", "high"]
+    message: str
+    include_snapshot: bool = False
+
+
+class DescribeSceneArgs(BaseModel):
+    detail: str = "normal"
+
+
+class FindObjectArgs(BaseModel):
+    name: str
+
+
+class ReadTextArgs(BaseModel):
+    pass
+
+
+class LookArgs(BaseModel):
+    question: str
+
+
+class AskUserArgs(BaseModel):
+    question: str
+    choices: list[str] | None = None
+
+
+class ConfirmPlanArgs(BaseModel):
+    plan_id: str
+    answer: Literal["yes", "no"]
+
+
+@dataclass(frozen=True)
+class ParsedCall:
+    name: str
+    args: dict[str, Any]
+    confidence: float
+    reason: str
+    action_class: ActionClass
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    action_class: ActionClass
+    args_model: type[BaseModel]
+    call_model: type[BaseModel]
+
+
+def _device_call_model(args_model: type[BaseModel]) -> type[BaseModel]:
+    """Device tools gain confidence and reason, which are stripped before a plan is built."""
+    return create_model(
+        f"{args_model.__name__}Call",
+        __base__=args_model,
+        confidence=(float, Field(ge=0, le=1)),
+        reason=(str, ...),
+    )
+
+
+def _spec(
+    name: str,
+    description: str,
+    action_class: ActionClass,
+    args_model: type[BaseModel],
+) -> ToolSpec:
+    call_model = args_model if action_class == "meta" else _device_call_model(args_model)
+    return ToolSpec(name, description, action_class, args_model, call_model)
+
+
+SPECS: dict[str, ToolSpec] = {
+    spec.name: spec
+    for spec in [
+        _spec("dim_lights", "Change a light's brightness. 0 is off.", "comfort", DimLightsArgs),
+        _spec("set_light_warmth", "Change a light's warmth.", "comfort", SetLightWarmthArgs),
+        _spec("set_blinds", "Move the blinds. 0 is closed, 100 is open.", "comfort", SetBlindsArgs),
+        _spec("play_sound", "Play a sound in the room.", "comfort", PlaySoundArgs),
+        _spec("stop_sound", "Stop the sound playing in the room.", "comfort", StopSoundArgs),
+        _spec(
+            "flash_lights",
+            "Pulse the lights as an alert, then restore them.",
+            "notify",
+            FlashLightsArgs,
+        ),
+        _spec("show_caption", "Show a caption on the companion screen.", "notify", ShowCaptionArgs),
+        _spec("announce", "Speak a short line in the room.", "notify", AnnounceArgs),
+        _spec("alert_caregiver", "Alert the caregiver.", "safety", AlertCaregiverArgs),
+        _spec("describe_scene", "Describe where things are relative to the person.", "meta", DescribeSceneArgs),
+        _spec("find_object", "Find an object in memory or in the live scene.", "meta", FindObjectArgs),
+        _spec("read_text", "Read text the camera can see.", "meta", ReadTextArgs),
+        _spec("look", "Answer a visual question about the current scene.", "meta", LookArgs),
+        _spec("ask_user", "Ask the person a question.", "meta", AskUserArgs),
+        _spec("confirm_plan", "Record a yes or no for a plan that is waiting.", "meta", ConfirmPlanArgs),
+    ]
+}
+
+META_TOOLS = {name for name, spec in SPECS.items() if spec.action_class == "meta"}
+DEVICE_TOOLS = set(SPECS) - META_TOOLS
+
+
+def perceptron_tools() -> list[dict]:
+    """Function schemas for a decision call. Do not combine these with a response schema."""
+    tools = []
+    for spec in SPECS.values():
+        schema = spec.call_model.model_json_schema()
+        schema.pop("title", None)
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": spec.name,
+                    "description": spec.description,
+                    "parameters": schema,
+                },
+            }
+        )
+    return tools
+
+
+def parse_call(name: str, raw_arguments: str) -> ParsedCall:
+    spec = SPECS.get(name)
+    if spec is None:
+        raise ToolError(name, "unknown tool")
+    text = raw_arguments.strip()
+    if not text:
+        if spec.action_class != "meta":
+            raise ToolError(name, "malformed arguments")
+        text = "{}"
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ToolError(name, "malformed arguments") from exc
+    if not isinstance(data, dict):
+        raise ToolError(name, "arguments must be a JSON object")
+    try:
+        model = spec.call_model.model_validate(data)
+    except ValidationError as exc:
+        raise ToolError(name, exc.errors()[0]["msg"]) from exc
+    dumped = model.model_dump(exclude_none=True)
+    confidence = float(dumped.pop("confidence", 1.0))
+    reason = str(dumped.pop("reason", ""))
+    return ParsedCall(name, dumped, confidence, reason, spec.action_class)
+
+
+def validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Check arguments the harness built itself, which have no confidence field."""
+    spec = SPECS.get(name)
+    if spec is None:
+        raise ToolError(name, "unknown tool")
+    try:
+        model = spec.args_model.model_validate(args)
+    except ValidationError as exc:
+        raise ToolError(name, exc.errors()[0]["msg"]) from exc
+    return model.model_dump(exclude_none=True)
+
+
+def action_class(name: str) -> ActionClass:
+    spec = SPECS.get(name)
+    if spec is None:
+        raise ToolError(name, "unknown tool")
+    return spec.action_class

@@ -1,0 +1,30 @@
+id = "speech_cognitive"
+display_name = "Speech or cognitive disability"
+needs = ["speech", "captions", "simple_language"]
+vocabulary = ["Fluffy", "lamp", "dim", "brighter", "yes", "no", "that", "one"]
+
+[output]
+speech = true
+captions = true
+speech_rate = 0.85
+light_cues = false
+audio_only_forbidden = false
+
+[input]
+voice = true
+typing = false
+buttons = true
+nod = true
+pointing = true
+
+[questions]
+confirm_back = "always"
+style = "one_at_a_time"
+repeat_once = true
+repeat_after_s = 20
+
+[agreements]
+notify = true
+safety = true
+caregiver = "Alex"
+person_name = "Sam"
