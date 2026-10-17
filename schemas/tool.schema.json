@@ -1,0 +1,724 @@
+{
+  "schema_version": "1.0",
+  "devices": {
+    "rooms": [
+      "living_room"
+    ],
+    "lights": {
+      "lamp.living_floor": "floor lamp next to the sofa",
+      "light.living_ceiling": "ceiling light"
+    },
+    "blinds": [
+      "blinds.living_window"
+    ],
+    "speakers": [
+      "speaker.living"
+    ],
+    "displays": [
+      "companion.living"
+    ],
+    "sounds": [
+      "rain",
+      "chime",
+      "white_noise",
+      "doorbell"
+    ],
+    "colors": [
+      "blue",
+      "red",
+      "amber",
+      "white"
+    ],
+    "patterns": [
+      "pulse1",
+      "pulse3",
+      "strobe"
+    ],
+    "caregiver": "Alex"
+  },
+  "tools": [
+    {
+      "name": "dim_lights",
+      "action_class": "comfort",
+      "description": "Set luminosity from 0 (off) to 100. Omit light to change every light in the room.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "luminosity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "0 is off and 100 is full brightness."
+          },
+          "light": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "lamp.living_floor",
+                  "light.living_ceiling"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A light id in the room. Omit for every light."
+          }
+        },
+        "required": [
+          "room",
+          "luminosity"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "luminosity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "0 is off and 100 is full brightness."
+          },
+          "light": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "lamp.living_floor",
+                  "light.living_ceiling"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A light id in the room. Omit for every light."
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "room",
+          "luminosity",
+          "confidence",
+          "reason"
+        ],
+        "description": "Set luminosity from 0 (off) to 100. Omit light to change every light in the room."
+      }
+    },
+    {
+      "name": "set_light_warmth",
+      "action_class": "comfort",
+      "description": "Set the warmth of every light in the room to warm, neutral, or cool.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "warmth": {
+            "type": "string",
+            "enum": [
+              "warm",
+              "neutral",
+              "cool"
+            ]
+          }
+        },
+        "required": [
+          "room",
+          "warmth"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "warmth": {
+            "type": "string",
+            "enum": [
+              "warm",
+              "neutral",
+              "cool"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "room",
+          "warmth",
+          "confidence",
+          "reason"
+        ],
+        "description": "Set the warmth of every light in the room to warm, neutral, or cool."
+      }
+    },
+    {
+      "name": "set_blinds",
+      "action_class": "comfort",
+      "description": "Set the blinds in a room from 0 (closed) to 100 (open).",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "room",
+          "position"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "room",
+          "position",
+          "confidence",
+          "reason"
+        ],
+        "description": "Set the blinds in a room from 0 (closed) to 100 (open)."
+      }
+    },
+    {
+      "name": "play_sound",
+      "action_class": "comfort",
+      "description": "Play a named sound in a room at a volume from 0 to 100.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sound": {
+            "type": "string",
+            "enum": [
+              "rain",
+              "chime",
+              "white_noise",
+              "doorbell"
+            ]
+          },
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "volume": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "sound",
+          "room",
+          "volume"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sound": {
+            "type": "string",
+            "enum": [
+              "rain",
+              "chime",
+              "white_noise",
+              "doorbell"
+            ]
+          },
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "volume": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "sound",
+          "room",
+          "volume",
+          "confidence",
+          "reason"
+        ],
+        "description": "Play a named sound in a room at a volume from 0 to 100."
+      }
+    },
+    {
+      "name": "stop_sound",
+      "action_class": "comfort",
+      "description": "Stop the sound playing in a room.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sound": {
+            "type": "string",
+            "enum": [
+              "rain",
+              "chime",
+              "white_noise",
+              "doorbell"
+            ]
+          },
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "volume": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "sound",
+          "room",
+          "volume"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sound": {
+            "type": "string",
+            "enum": [
+              "rain",
+              "chime",
+              "white_noise",
+              "doorbell"
+            ]
+          },
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "volume": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "sound",
+          "room",
+          "volume",
+          "confidence",
+          "reason"
+        ],
+        "description": "Stop the sound playing in a room."
+      }
+    },
+    {
+      "name": "flash_lights",
+      "action_class": "notify",
+      "description": "Flash the lights in a room, then restore their previous state. duration_s is at most 10.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "red",
+              "amber",
+              "white"
+            ]
+          },
+          "pattern": {
+            "type": "string",
+            "enum": [
+              "pulse1",
+              "pulse3",
+              "strobe"
+            ]
+          },
+          "duration_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "room",
+          "color",
+          "pattern",
+          "duration_s"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "red",
+              "amber",
+              "white"
+            ]
+          },
+          "pattern": {
+            "type": "string",
+            "enum": [
+              "pulse1",
+              "pulse3",
+              "strobe"
+            ]
+          },
+          "duration_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 10
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "room",
+          "color",
+          "pattern",
+          "duration_s",
+          "confidence",
+          "reason"
+        ],
+        "description": "Flash the lights in a room, then restore their previous state. duration_s is at most 10."
+      }
+    },
+    {
+      "name": "show_caption",
+      "action_class": "notify",
+      "description": "Show a caption of at most 140 characters. Priority high stays until dismissed; any other priority clears after 15 seconds.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "large",
+              "xl"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "minLength": 1,
+            "default": "normal"
+          }
+        },
+        "required": [
+          "text",
+          "size"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "large",
+              "xl"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "minLength": 1,
+            "default": "normal"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "text",
+          "size",
+          "confidence",
+          "reason"
+        ],
+        "description": "Show a caption of at most 140 characters. Priority high stays until dismissed; any other priority clears after 15 seconds."
+      }
+    },
+    {
+      "name": "announce",
+      "action_class": "notify",
+      "description": "Speak text in a room with browser text-to-speech.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          }
+        },
+        "required": [
+          "text",
+          "room"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "room": {
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "text",
+          "room",
+          "confidence",
+          "reason"
+        ],
+        "description": "Speak text in a room with browser text-to-speech."
+      }
+    },
+    {
+      "name": "alert_caregiver",
+      "action_class": "safety",
+      "description": "Record an alert for the caregiver. include_snapshot defaults to false. This subsystem never attaches an image or contacts a real person.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "high"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "include_snapshot": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "severity",
+          "message"
+        ]
+      },
+      "model_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "high"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "include_snapshot": {
+            "type": "boolean",
+            "default": false
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Removed before the plan is built."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Removed before the plan is built."
+          }
+        },
+        "required": [
+          "severity",
+          "message",
+          "confidence",
+          "reason"
+        ],
+        "description": "Record an alert for the caregiver. include_snapshot defaults to false. This subsystem never attaches an image or contacts a real person."
+      }
+    }
+  ]
+}
