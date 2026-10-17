@@ -10,10 +10,12 @@ dependencies = [
     "python-dotenv>=1.0",
     "python-multipart>=0.0.12",
     "uvicorn>=0.32",
+    "websockets>=13",
 ]
 
 [dependency-groups]
 dev = [
+    "opencv-python>=5.0.0.93",
     "pytest>=8",
 ]
 
@@ -26,6 +28,7 @@ where = ["src"]
 
 [project.scripts]
 fluffy-demo = "fluffy.demo.app:main"
+fluffy-live = "fluffy.live.server:main"
 
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]

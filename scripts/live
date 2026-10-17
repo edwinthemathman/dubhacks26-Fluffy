@@ -1,0 +1,6 @@
+#!/bin/sh
+# Start the live harness on :8000 (camera and mic come from the web app's Demo page).
+# PYTHONPATH keeps this working if the editable install path is not picked up.
+cd "$(dirname "$0")/.." || exit 1
+export PYTHONPATH=src${PYTHONPATH:+:$PYTHONPATH}
+exec .venv/bin/python -m fluffy.live.server

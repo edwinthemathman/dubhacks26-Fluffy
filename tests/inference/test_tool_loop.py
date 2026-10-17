@@ -150,6 +150,30 @@ def test_spoken_plan_still_passes_through_consent():
     assert held.status == "asking"
 
 
+def test_music_and_dim_lights_are_one_plan():
+    result = _run(
+        ScriptedProvider([]),
+        reply_steps=[
+            Completion(
+                text="I'll play music and dim the lamp.",
+                tool_calls=[
+                    ToolCall(
+                        "c1",
+                        "play_sound",
+                        _args(sound="music", room="living_room", volume=40, confidence=0.9, reason="asked for music"),
+                    ),
+                    ToolCall("c2", "dim_lights", _dim(25)),
+                ],
+            )
+        ],
+        trigger=Trigger(kind="spoken", utterance="play music and dim the lights", room="living_room"),
+    )
+    assert result.plan is not None
+    assert [action.tool for action in result.plan.actions] == ["play_sound", "dim_lights"]
+    assert result.plan.actions[0].args["sound"] == "music"
+    assert result.plan.actions[1].args["luminosity"] == 25
+
+
 def test_catalog_rejects_malformed_json():
     try:
         parse_call("dim_lights", "{")

@@ -38,7 +38,7 @@ class SetBlindsArgs(BaseModel):
 
 
 class PlaySoundArgs(BaseModel):
-    sound: Literal["rain", "chime", "white_noise", "doorbell"]
+    sound: Literal["music", "rain", "chime", "white_noise", "doorbell"]
     room: Literal["living_room"]
     volume: int = Field(ge=0, le=100)
 
@@ -163,7 +163,14 @@ SPECS: dict[str, ToolSpec] = {
             SetLightWarmthArgs,
         ),
         _spec("set_blinds", "Move the blinds. 0 is closed, 100 is open.", "comfort", SetBlindsArgs),
-        _spec("play_sound", "Play a sound in the room.", "comfort", PlaySoundArgs),
+        _spec(
+            "play_sound",
+            "Play a sound in the room. Use music when they ask for music. "
+            "Use rain, white_noise, or chime for sleep or a soft background. "
+            "Call this in the same turn as dim_lights or another comfort tool when the request asks for both.",
+            "comfort",
+            PlaySoundArgs,
+        ),
         _spec("stop_sound", "Stop the sound playing in the room.", "comfort", StopSoundArgs),
         _spec(
             "flash_lights",

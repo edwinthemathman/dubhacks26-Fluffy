@@ -12,6 +12,7 @@ def test_clip_page_loads():
     assert "Fluffy would do this" in response.text
     assert "Fluffy would ask" in response.text
     assert "Nothing to do" in response.text
+    assert "Transcript" in response.text
 
 
 def test_analyze_requires_a_video():

@@ -40,6 +40,8 @@ def derive(scene: SceneState | None) -> set[str]:
     cues: set[str] = set()
     if "help" in sounds:
         cues.add("fall")
+    if _thud_out_of_sight(scene, sounds):
+        cues.add("fall")
     for person in scene.people:
         if _looks_hurt(person, sounds):
             cues.add("fall")
@@ -121,6 +123,23 @@ def _looks_hurt(person, sounds: set[str]) -> bool:
     # a pain sound too, so a stretch or a yawn is not a fall.
     signs = set(person.distress_signs) - {"motionless"}
     return bool(signs) and "pain" in sounds
+
+
+def _thud_out_of_sight(scene: SceneState, sounds: set[str]) -> bool:
+    """A thud nobody can be seen to be fine after, e.g. a fall at the frame edge.
+
+    The app asks before calling anyone, so a false alarm only costs a question.
+    """
+    if "impact" not in sounds:
+        return False
+    if "pain" in sounds:
+        return True
+    if not scene.people:
+        return True
+    return all(
+        person.posture == "unknown" or person.activity == "leaving"
+        for person in scene.people
+    )
 
 
 def _asleep(scene: SceneState, sounds: set[str]) -> bool:

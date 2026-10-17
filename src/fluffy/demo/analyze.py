@@ -21,7 +21,7 @@ from fluffy.ids import IdFactory
 from fluffy.models import Plan, Trigger
 from fluffy.models.tool_catalog import perceptron_tools
 from fluffy.perception.provider import ToolCall
-from fluffy.perception.scene import SceneState, SoundRead, apply_sound_read
+from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
 
 MODEL = "perceptron-mk1.5"
@@ -76,7 +76,9 @@ def _analyze_uploaded(
     clock: Clock,
 ) -> dict[str, Any]:
     heard, sound_error = _hear(client, file_id)
-    scene, scene_error = _read_scene(client, file_id)
+    spoken, transcript_error = _transcribe(client, file_id, profile)
+    transcript = spoken.transcript.strip() if spoken else ""
+    scene, scene_error = _read_scene(client, file_id, transcript)
     scene = apply_sound_read(scene, heard)
     cues = derive(scene)
     scene_text = _scene_text(scene)
@@ -84,7 +86,7 @@ def _analyze_uploaded(
     # Always run the decision call. It watches the clip itself, so it can
     # catch what the structured scene read missed. Skipping it whenever the
     # scene read found no cue was the main source of missed actions.
-    user_text = _user_text(profile, utterance, scene, cues)
+    user_text = _user_text(profile, utterance, scene, cues, transcript=transcript)
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},
         {
@@ -108,6 +110,7 @@ def _analyze_uploaded(
             model=MODEL,
             messages=messages,
             tools=tools,
+            parallel_tool_calls=True,
             reasoning_effort="low",
             max_completion_tokens=1024,
             timeout=REQUEST_TIMEOUT_S,
@@ -180,6 +183,8 @@ def _analyze_uploaded(
         scene_error=scene_error,
         sound_error=sound_error,
         heard=heard.heard if heard else "",
+        transcript=transcript,
+        transcript_error=transcript_error,
         plan=plan,
         consent=consent,
         rejected=rejected,
@@ -187,6 +192,125 @@ def _analyze_uploaded(
         usage=usage,
         outcome=_outcome(consent),
     )
+
+
+# Prompts are module constants so the live loop (fluffy.live) sends the same words.
+SOUND_PROMPT = (
+    "Listen to this clip. Label only what you hear. "
+    "sounds is a list using only these words: "
+    "snoring, door, help, pain, impact, doorbell, knock, alarm, speech, none. "
+    "none means silence. Do not put none next to another label. "
+    "help means a call for help, or someone saying they fell, "
+    "can't get up, or need help. "
+    "'Help me find my keys' is speech, not help. "
+    "pain means a groan, moan, cry, yelp, 'ow', 'ah', or a sharp gasp. "
+    "Pain needs no words; label it even if nobody says anything. "
+    "impact means a thud, crash, bump, or something or someone hitting the floor. "
+    "snoring means they sound asleep. "
+    "door is only a door opening or closing, a latch, or keys. "
+    "A heavy thud of a body or object hitting the floor is impact, not door. "
+    "If you are unsure between door and impact, use impact. "
+    "After an impact, listen for groans, gasps, or hard breathing and label pain. "
+    "doorbell, knock, and alarm are those sounds. "
+    "speech is talking that is not a call for help. "
+    "A clip can have several labels, e.g. impact and pain. "
+    "heard is one short sentence about the soundtrack, in order."
+)
+
+
+def transcript_prompt(profile: Profile | None) -> str:
+    words = ", ".join(profile.vocabulary) if profile and profile.vocabulary else "none"
+    return (
+        "Transcribe the speech in this clip. "
+        "transcript is only the words that were said, in order. "
+        "If nobody speaks, transcript is an empty string. "
+        "Do not describe groans, thuds, music, or other sounds that are not words. "
+        "Guess generously when the speech is hard to make out. "
+        "clear is true only when you are confident those are the words. "
+        f"Words this person often uses: {words}."
+    )
+
+# Used for both uploaded clips and live frame windows.
+SCENE_PROMPT = (
+    "You are the eyes of a home companion for someone with a disability. "
+    "Watch the whole clip from start to end before answering.\n"
+    "timeline: 2 to 6 short beats, in order, of what people DO, "
+    "e.g. 'standing by sofa', 'stumbles', 'falls to floor', "
+    "'holds knee, grimaces', 'stays down'. Write this first.\n"
+    "If a person stumbles, drops low, or goes down toward the floor as they "
+    "leave the frame, or vanishes from view suddenly, that is a fall, not leaving. "
+    "Write it in the timeline, e.g. 'stumbles', 'drops out of view'. "
+    "A thud or crash right after someone moves out of view means they likely fell.\n"
+    "people: one entry per person, describing them at the END of the clip. "
+    "If they are not visible at the end, describe them as last seen.\n"
+    "- fell: true if they went from upright to the floor or ground "
+    "at any point, even if nobody says anything, including going down "
+    "at the edge of the frame or out of view.\n"
+    "- on_floor: true if they are on the floor now. location_surface is "
+    "what they are on now: floor, sofa, bed, or unknown.\n"
+    "- distress_signs: any of grimacing, holding_body, not_getting_up, "
+    "struggling_to_rise, motionless, crawling. Empty if none.\n"
+    "- activity: sleeping, arriving, leaving, idle, distressed, fallen, or unknown. "
+    "fallen if they fell and are still down. distressed if they look hurt, "
+    "scared, or in pain. leaving is only a calm, upright walk out of frame.\n"
+    "- gesture: shielding_eyes if they cover or squint away from a light. "
+    "attention_target is a device id such as lamp.living_floor, or null.\n"
+    "Lying on the floor is not resting. Someone lying still on a sofa or bed "
+    "with eyes closed is resting.\n"
+    "sounds: only snoring, door, help, pain, impact, doorbell, knock, alarm, "
+    "speech, none. pain is a groan, cry, or 'ow' and needs no words. "
+    "impact is a thud or crash. help is a call for help, "
+    "not 'help me find my keys'.\n"
+    "objects_seen is only for keys, phone, glasses, wallet, pill organizer, "
+    "cane, or hearing aids.\n"
+    "summary: one sentence on how things are at the end.\n"
+    "Use unknown when you cannot tell."
+)
+
+
+def scene_prompt(transcript: str = "") -> str:
+    """Scene layout. The transcript tells the read what the words were about."""
+    words = transcript.strip() or "(nobody spoke)"
+    return (
+        f"{SCENE_PROMPT}\n"
+        f"Transcript: {words}\n"
+        "Use the transcript to lay the scene out, not only to label sound. "
+        "Add a timeline beat for what they said, placed next to what they were doing. "
+        "If they name keys, a phone, glasses, a wallet, a pill organizer, a cane, or hearing aids, "
+        "look for that object and put it in objects_seen when you can see it, with where it is. "
+        "If they say they fell, can't get up, or need help, set fell and activity to fallen or "
+        "distressed, unless they are clearly upright and fine. "
+        "If they say they just got home, activity can be arriving. "
+        "If they say they are tired or going to sleep, and they are lying or sitting, activity can be sleeping. "
+        "The picture wins when it plainly contradicts the words. "
+        "summary: one sentence that includes what you see and what they said."
+    )
+
+
+def _transcribe(
+    client: Client, file_id: str, profile: Profile
+) -> tuple[TranscriptRead | None, str | None]:
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        video(file_id=file_id),
+                        {"type": "text", "text": transcript_prompt(profile)},
+                    ],
+                }
+            ],
+            response_format=pydantic_format(TranscriptRead, strict=False),
+            reasoning_effort="none",
+            max_completion_tokens=256,
+            timeout=REQUEST_TIMEOUT_S,
+            vision_config={"enable_audio_in_video": True},
+        )
+    except SDKError as exc:
+        return None, _safe_error(exc)
+    return _parse_model(completion.text, TranscriptRead, "Transcript")
 
 
 def _hear(client: Client, file_id: str) -> tuple[SoundRead | None, str | None]:
@@ -201,24 +325,7 @@ def _hear(client: Client, file_id: str) -> tuple[SoundRead | None, str | None]:
                         video(file_id=file_id),
                         {
                             "type": "text",
-                            "text": (
-                                "Listen to this clip. Label only what you hear. "
-                                "sounds is a list using only these words: "
-                                "snoring, door, help, pain, impact, doorbell, knock, alarm, speech, none. "
-                                "none means silence. Do not put none next to another label. "
-                                "help means a call for help, or someone saying they fell, "
-                                "can't get up, or need help. "
-                                "'Help me find my keys' is speech, not help. "
-                                "pain means a groan, moan, cry, yelp, 'ow', 'ah', or a sharp gasp. "
-                                "Pain needs no words; label it even if nobody says anything. "
-                                "impact means a thud, crash, bump, or something or someone hitting the floor. "
-                                "snoring means they sound asleep. "
-                                "door means a door, a latch, keys, or someone coming in. "
-                                "doorbell, knock, and alarm are those sounds. "
-                                "speech is talking that is not a call for help. "
-                                "A clip can have several labels, e.g. impact and pain. "
-                                "heard is one short sentence about the soundtrack, in order."
-                            ),
+                            "text": SOUND_PROMPT,
                         },
                     ],
                 }
@@ -234,7 +341,9 @@ def _hear(client: Client, file_id: str) -> tuple[SoundRead | None, str | None]:
     return _parse_model(completion.text, SoundRead, "Sound read")
 
 
-def _read_scene(client: Client, file_id: str) -> tuple[SceneState | None, str | None]:
+def _read_scene(
+    client: Client, file_id: str, transcript: str = ""
+) -> tuple[SceneState | None, str | None]:
     try:
         completion = client.chat.completions.create(
             model=MODEL,
@@ -245,35 +354,7 @@ def _read_scene(client: Client, file_id: str) -> tuple[SceneState | None, str | 
                         video(file_id=file_id),
                         {
                             "type": "text",
-                            "text": (
-                                "You are the eyes of a home companion for someone with a disability. "
-                                "Watch the whole clip from start to end before answering.\n"
-                                "timeline: 2 to 6 short beats, in order, of what people DO, "
-                                "e.g. 'standing by sofa', 'stumbles', 'falls to floor', "
-                                "'holds knee, grimaces', 'stays down'. Write this first.\n"
-                                "people: one entry per person, describing them at the END of the clip.\n"
-                                "- fell: true if they went from upright to the floor or ground "
-                                "at any point, even if nobody says anything.\n"
-                                "- on_floor: true if they are on the floor now. location_surface is "
-                                "what they are on now: floor, sofa, bed, or unknown.\n"
-                                "- distress_signs: any of grimacing, holding_body, not_getting_up, "
-                                "struggling_to_rise, motionless, crawling. Empty if none.\n"
-                                "- activity: sleeping, arriving, leaving, idle, distressed, fallen, or unknown. "
-                                "fallen if they fell and are still down. distressed if they look hurt, "
-                                "scared, or in pain.\n"
-                                "- gesture: shielding_eyes if they cover or squint away from a light. "
-                                "attention_target is a device id such as lamp.living_floor, or null.\n"
-                                "Lying on the floor is not resting. Someone lying still on a sofa or bed "
-                                "with eyes closed is resting.\n"
-                                "sounds: only snoring, door, help, pain, impact, doorbell, knock, alarm, "
-                                "speech, none. pain is a groan, cry, or 'ow' and needs no words. "
-                                "impact is a thud or crash. help is a call for help, "
-                                "not 'help me find my keys'.\n"
-                                "objects_seen is only for keys, phone, glasses, wallet, pill organizer, "
-                                "cane, or hearing aids.\n"
-                                "summary: one sentence on how things are at the end.\n"
-                                "Use unknown when you cannot tell."
-                            ),
+                            "text": scene_prompt(transcript),
                         },
                     ],
                 }
@@ -340,8 +421,10 @@ def _user_text(
     utterance: str,
     scene: SceneState | None,
     cues: set[str] | None = None,
+    transcript: str = "",
 ) -> str:
-    said = utterance or "(nothing typed; most moments come with no request, so decide from the clip)"
+    said = utterance or "(nothing typed)"
+    words = transcript.strip() or "(none)"
     if scene is None:
         timeline = "not available"
         people = "unknown"
@@ -364,15 +447,26 @@ def _user_text(
             f"- Lighting: {lighting}",
             f"- Sounds: {sounds}",
             f"- Cues flagged so far: {flagged}",
-            f"They said: {said}",
+            f"- Transcript: {words}",
+            "The transcript is a decision. If it asks for several things, call every matching tool "
+            "in this same turn. Play music and dim the lights means play_sound sound=music and dim_lights together. "
+            "If it says they fell, can't get up, or need help, call alert_caregiver and nothing else. "
+            "'Help me find my keys' is a request to find keys, not a fall.",
+            f"- Typed: {said}",
             "",
             f"Room: living_room. Profile: {profile.id}.",
             "Devices: lamp.living_floor (floor lamp by the sofa), light.living_ceiling, "
             "blinds.living_window, speaker.living.",
             "",
-            "Decide now. If someone fell, is down on the floor, or looks hurt, call "
-            "alert_caregiver and nothing else, whether or not anyone spoke. "
-            "Otherwise call the tool that fits what you see, or no tools if nothing is needed.",
+            "An impact sound with the person out of view or not clearly okay at the end "
+            "is a red flag for a fall, not an arrival or someone leaving.",
+            "",
+            "Decide now from the picture and the transcript together. "
+            "If the transcript asks for one thing or several, call every tool it needs in this turn. "
+            "If someone fell, is down on the floor, or looks hurt, or the transcript says they fell, "
+            "can't get up, or need help, or there is a thud and the person is out of view or not "
+            "clearly okay, call alert_caregiver and nothing else. The app asks before calling anyone. "
+            "If nothing in the picture or the transcript needs a change, call no tools.",
         ]
     )
 
@@ -385,6 +479,8 @@ def _result(
     scene_error: str | None,
     sound_error: str | None,
     heard: str,
+    transcript: str,
+    transcript_error: str | None,
     plan: Plan | None,
     consent: dict[str, Any] | None,
     rejected: list[str],
@@ -397,6 +493,8 @@ def _result(
         "asked": asked,
         "outcome": outcome,
         "heard": heard,
+        "transcript": transcript,
+        "transcript_error": transcript_error,
         "scene": scene.model_dump() if scene is not None else None,
         "scene_error": scene_error,
         "sound_error": sound_error,

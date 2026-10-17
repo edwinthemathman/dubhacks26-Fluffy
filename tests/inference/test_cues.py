@@ -270,3 +270,41 @@ def test_sound_read_replaces_the_scene_labels():
     assert merged is not None
     assert merged.sounds == ["snoring"]
     assert merged.summary == "someone on the sofa"
+
+
+def test_a_thud_after_someone_leaves_the_frame_asks_for_help():
+    # The live clip: a fall at the edge of the frame read as "walked out".
+    scene = _scene(PersonState(), sounds=["impact", "door"])
+    assert "fall" in derive(scene)
+    assert "arriving" not in derive(scene)
+    assert judge(scene, None) == "ask_for_help"
+
+
+def test_a_thud_and_a_groan_with_nobody_in_view_is_a_fall():
+    scene = _scene(sounds=["impact", "pain"])
+    assert "fall" in derive(scene)
+
+
+def test_a_thud_while_someone_sits_fine_is_not_a_fall():
+    scene = _scene(
+        PersonState(posture="sitting", activity="idle", location_surface="sofa", eyes="open"),
+        sounds=["impact"],
+    )
+    assert "fall" not in derive(scene)
+
+
+def test_decision_text_includes_the_transcript():
+    from fluffy.demo.analyze import _user_text, scene_prompt
+
+    text = _user_text(
+        profiles()["blind"],
+        "",
+        None,
+        set(),
+        transcript="I fell and I can't get up",
+    )
+    assert "Transcript: I fell and I can't get up" in text
+    assert "The transcript is a decision." in text
+    laid_out = scene_prompt("where are my keys")
+    assert "Transcript: where are my keys" in laid_out
+    assert "objects_seen" in laid_out

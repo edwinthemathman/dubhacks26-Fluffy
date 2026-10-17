@@ -48,6 +48,13 @@ class SoundRead(BaseModel):
     heard: str = ""
 
 
+class TranscriptRead(BaseModel):
+    """Words spoken in the clip. Empty when nobody talks."""
+
+    transcript: str = ""
+    clear: bool = False
+
+
 class SceneState(BaseModel):
     # First on purpose: the model writes what happened, in order, before it
     # fills the end-state fields, so a fall in the middle of a clip is not lost.

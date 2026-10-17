@@ -257,6 +257,11 @@
       const labels = scene ? (scene.sounds || []).filter((sound) => sound && sound !== "none") : [];
       const heard = body.heard || (labels.length ? labels.join(", ") : "nothing");
       parts.push(`<p class="kicker">Heard</p><p>${escapeHtml(heard)}</p>`);
+      const transcript = (body.transcript || "").trim();
+      parts.push(`<p class="kicker">Transcript</p><p>${escapeHtml(transcript || "Nothing said.")}</p>`);
+      if (body.transcript_error) {
+        parts.push(`<p class="hint">Transcript failed: ${escapeHtml(body.transcript_error)}</p>`);
+      }
       if (body.sound_error) {
         parts.push(`<p class="hint">Sound detection failed: ${escapeHtml(body.sound_error)}</p>`);
       }
