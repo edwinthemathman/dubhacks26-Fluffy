@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fluffy — watch a clip</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #142033;
+      --muted: #52627a;
+      --line: #d5e0ef;
+      --paper: #f3f7fc;
+      --card: #ffffff;
+      --blue: #0c4dad;
+      --blue-soft: #e7f0ff;
+      --amber: #8a5a00;
+      --amber-soft: #fff4d6;
+      --green: #0d6b45;
+      --green-soft: #e5f6ee;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    main {
+      width: min(880px, calc(100% - 32px));
+      margin: 32px auto 64px;
+    }
+    h1 { font-size: 2rem; margin: 0 0 8px; letter-spacing: -0.03em; }
+    .lede { margin: 0 0 24px; color: var(--muted); max-width: 46rem; }
+    form, .result, .error {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px;
+    }
+    fieldset { border: 0; margin: 0 0 18px; padding: 0; }
+    legend, label { display: block; font-weight: 650; margin-bottom: 8px; }
+    .profiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .profiles label {
+      font-weight: 600;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      margin: 0;
+      cursor: pointer;
+    }
+    .profiles input { margin-right: 6px; }
+    .profiles label:has(input:checked) {
+      border-color: var(--blue);
+      background: var(--blue-soft);
+    }
+    .drop {
+      border: 1.5px dashed var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      background: #f8fbff;
+    }
+    input[type="file"], textarea {
+      width: 100%;
+      font: inherit;
+    }
+    textarea {
+      min-height: 72px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      resize: vertical;
+    }
+    video {
+      width: 100%;
+      max-height: 280px;
+      margin-top: 12px;
+      border-radius: 12px;
+      background: #0e1726;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button {
+      font: inherit;
+      font-weight: 700;
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      cursor: pointer;
+    }
+    button.primary { background: var(--blue); color: white; }
+    button.secondary { background: var(--blue-soft); color: var(--blue); }
+    button:disabled { opacity: 0.55; cursor: progress; }
+    .hint { color: var(--muted); font-size: 0.92rem; margin: 8px 0 0; }
+    .result, .error { margin-top: 16px; }
+    .error { background: #fff1f0; border-color: #f0c2be; }
+    .kicker { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.75rem; color: var(--muted); margin: 0 0 6px; }
+    .reply { font-size: 1.35rem; margin: 0 0 12px; }
+    .question {
+      background: var(--amber-soft);
+      color: var(--amber);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 0 0 14px;
+      font-size: 1.15rem;
+    }
+    .ready {
+      background: var(--green-soft);
+      color: var(--green);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 0 0 14px;
+    }
+    .action {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      border-top: 1px solid var(--line);
+      padding: 10px 0;
+    }
+    .action code { font-size: 0.95rem; }
+    .args { color: var(--muted); line-height: 1.4; }
+    details { margin-top: 12px; color: var(--muted); }
+    .status { min-height: 1.2em; margin: 10px 0 0; }
+    @media (max-width: 700px) {
+      .profiles { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="kicker">Fluffy inference</p>
+    <h1>Watch a clip</h1>
+    <p class="lede">
+      Upload a short video. Perceptron watches it and labels the sound, then decides.
+      Snoring, a door, and a call for help are different situations.
+      Nothing in the home changes from this page.
+    </p>
+    <form id="clip-form">
+      <fieldset>
+        <legend>Who is this for?</legend>
+        <div class="profiles">
+          <label><input type="radio" name="profile" value="blind" checked /> Blind or low vision</label>
+          <label><input type="radio" name="profile" value="deaf" /> Deaf or hard of hearing</label>
+          <label><input type="radio" name="profile" value="speech_cognitive" /> Speech or cognitive</label>
+        </div>
+      </fieldset>
+      <label for="video">Video clip</label>
+      <div class="drop" id="drop">
+        <input id="video" name="video_file" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" />
+        <video id="preview" controls hidden></video>
+      </div>
+      <p class="hint">mp4, webm, or mov, ideally 5–20 seconds. The clip is uploaded for this request, then deleted.</p>
+      <label for="utterance" style="margin-top: 16px">What they said, if you want to type it</label>
+      <textarea id="utterance" name="utterance" placeholder="Fluffy, dim the lamp"></textarea>
+      <div class="actions">
+        <button class="primary" id="analyze" type="submit">Analyze clip</button>
+        <button class="secondary" id="sample" type="button">Try the sample clip</button>
+      </div>
+      <p class="status" id="status" role="status"></p>
+    </form>
+    <section class="error" id="error" hidden></section>
+    <section class="result" id="result" hidden aria-live="polite"></section>
+  </main>
+  <script>
+    const form = document.querySelector("#clip-form");
+    const fileInput = document.querySelector("#video");
+    const preview = document.querySelector("#preview");
+    const status = document.querySelector("#status");
+    const errorBox = document.querySelector("#error");
+    const resultBox = document.querySelector("#result");
+    const buttons = [...form.querySelectorAll("button")];
+    let previewUrl = "";
+
+    fileInput.addEventListener("change", () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      const file = fileInput.files[0];
+      if (!file) {
+        preview.hidden = true;
+        return;
+      }
+      previewUrl = URL.createObjectURL(file);
+      preview.src = previewUrl;
+      preview.hidden = false;
+    });
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      if (!data.get("video_file") || !data.get("video_file").name) {
+        showError("Choose a video clip first.");
+        return;
+      }
+      submit("/api/analyze", data);
+    });
+
+    document.querySelector("#sample").addEventListener("click", () => {
+      const data = new FormData();
+      data.set("profile", form.profile.value);
+      data.set("utterance", form.utterance.value);
+      submit("/api/analyze-sample", data);
+    });
+
+    async function submit(url, data) {
+      setBusy(true, "Fluffy is watching and listening. This usually takes under a minute.");
+      errorBox.hidden = true;
+      try {
+        const response = await fetch(url, { method: "POST", body: data });
+        const body = await response.json();
+        if (!response.ok) {
+          showError(body.detail || "The analysis failed.");
+          return;
+        }
+        status.textContent = "";
+        render(body);
+      } catch (error) {
+        showError("The page could not reach the demo server.");
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function setBusy(busy, message) {
+      buttons.forEach((button) => { button.disabled = busy; });
+      if (message) status.textContent = message;
+    }
+
+    function showError(message) {
+      errorBox.hidden = false;
+      errorBox.textContent = message;
+      status.textContent = "";
+    }
+
+    function render(body) {
+      resultBox.hidden = false;
+      const scene = body.scene;
+      const consent = body.consent;
+      const plan = body.plan;
+      const outcome = body.outcome || "quiet";
+      const heading = {
+        act: "Fluffy would do this",
+        ask: "Fluffy would ask",
+        quiet: "Nothing to do",
+      }[outcome] || "Nothing to do";
+      const parts = [];
+      parts.push(`<p class="kicker">${heading}</p>`);
+      if (outcome === "ask") {
+        const question = (consent && consent.question) || body.reply || "Should I help?";
+        parts.push(`<p class="question">${escapeHtml(question)}</p>`);
+      } else if (outcome === "act") {
+        parts.push(`<p class="reply">${escapeHtml(body.reply || (plan && plan.intent) || "Doing it.")}</p>`);
+        parts.push(`<p class="ready">Ready to send. Consent: ${escapeHtml((consent && consent.given_by) || "given")}.</p>`);
+      } else {
+        const held = consent && consent.status === "dropped" ? consent.reason : "";
+        parts.push(`<p class="reply">${escapeHtml(held || "Nothing needs to change.")}</p>`);
+      }
+      const labels = scene ? (scene.sounds || []).filter((sound) => sound && sound !== "none") : [];
+      const heard = body.heard || (labels.length ? labels.join(", ") : "nothing");
+      parts.push(`<p class="kicker">Heard</p><p>${escapeHtml(heard)}</p>`);
+      if (body.sound_error) {
+        parts.push(`<p class="hint">Sound detection failed: ${escapeHtml(body.sound_error)}</p>`);
+      }
+      if (scene) {
+        parts.push(`<p class="kicker">Scene</p><p>${escapeHtml(scene.summary || "No summary.")}</p>`);
+        const people = (scene.people || []).map((person) => {
+          return `${person.activity || "unknown"} · ${person.posture || "person"}, ${person.location_surface || "unknown place"}`;
+        }).join("; ");
+        if (people) parts.push(`<p>${escapeHtml(people)}</p>`);
+      } else if (body.scene_error) {
+        parts.push(`<p class="hint">Scene read failed: ${escapeHtml(body.scene_error)}</p>`);
+      }
+      if (outcome !== "quiet" && plan && plan.actions.length) {
+        parts.push(`<p class="kicker">Proposed plan · ${escapeHtml(plan.action_class)} · ${Math.round(plan.confidence * 100)}%</p>`);
+        for (const action of plan.actions) {
+          const args = Object.entries(action.args).map(([key, value]) => `${key}=${value}`).join(", ");
+          parts.push(`<div class="action"><code>${escapeHtml(action.tool)}</code><span class="args">${escapeHtml(args)}</span></div>`);
+        }
+      } else if (outcome === "quiet") {
+        parts.push(`<p>No device change.</p>`);
+      }
+      const detail = [
+        `rounds ${body.rounds}`,
+        body.usage && body.usage.total_tokens ? `${body.usage.total_tokens} tokens` : "",
+        (body.rejected || []).length ? `rejected: ${body.rejected.join("; ")}` : "",
+      ].filter(Boolean).join(" · ");
+      if (detail) parts.push(`<details><summary>Call details</summary><p>${escapeHtml(detail)}</p></details>`);
+      resultBox.innerHTML = parts.join("");
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+  </script>
+</body>
+</html>

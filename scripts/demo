@@ -1,0 +1,6 @@
+#!/bin/sh
+# Start the clip demo. PYTHONPATH keeps this working if the editable install
+# path is not picked up.
+cd "$(dirname "$0")/.." || exit 1
+export PYTHONPATH=src${PYTHONPATH:+:$PYTHONPATH}
+exec .venv/bin/python -m fluffy.demo.app
