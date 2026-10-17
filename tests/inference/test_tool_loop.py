@@ -84,7 +84,7 @@ def test_meta_results_are_resent_and_device_calls_become_one_plan():
     sent_again = " ".join(message.content for message in provider.seen[1])
     assert "on the table" in sent_again
     assert "where are my keys" in sent_again
-    assert "Never change the home without consent." in provider.seen[0][0].content
+    assert "The app asks the person before anything changes" in provider.seen[0][0].content
 
 
 def test_tool_loop_stops_at_three_rounds():

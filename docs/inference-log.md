@@ -48,13 +48,35 @@ Run with `uv sync` then `uv run pytest` (Python 3.12).
 - Profiles use the demo names Sam and Alex, and a starter vocabulary list.
 - `given_by` includes `pointing`, and plans carry `context_snapshot_id`. Neither field is in the Part 1 schema yet.
 
-## Not started
+## Demo
 
-- The Perceptron spike: latency, how often tool arguments parse, atypical-speech transcription, nods, sound labels, OCR, on-floor detection.
-- A real Perceptron client. Decision calls go through `DecisionProvider`.
-- Nod answer-mode (1.5 s bursts) and the sound-label gate.
-- Wiring plans to the executor WebSocket. This package only builds plans.
-- Scene change detection. That trigger sits on Part 3's camera.
+`./scripts/demo` serves http://127.0.0.1:8091. Upload an mp4, webm, or mov. The server uploads it to Perceptron, reads the scene, then runs a decision call. The key stays in `.env`.
+
+## Prompt pass: vision first, fewer missed actions
+
+Live clips mostly produced no action when one was needed, for example a fall with groaning but no "help". Changes:
+
+- **The decision call always runs.** The demo used to skip it whenever the structured scene read found no cue. Any miss in the scene read became a silent "quiet", which was the biggest source of missed actions.
+- **The decision prompt is rewritten** (`brain/decide.py`):
+  - watch first, then use sound as backup, then treat words as one more cue
+  - a fall or a person who looks hurt calls `alert_caregiver` even with no words
+  - a table of situations and actions, with the brightness ranges the cue matcher expects
+  - **tool calls are proposals, because the app asks for consent.** The old "never change the home without consent" line made the model hold back.
+- **The scene read follows the clip over time.** A `timeline` field is written first, plus `fell`, `distress_signs` and a `fallen` activity. Reasoning is raised from `none` to `low`.
+- **New sound labels:** `pain` (groan, cry, "ow", no words needed) and `impact` (thud, crash).
+- **Fall cues** (`brain/cues.py`) fire on any of:
+  - the person fell
+  - on the floor
+  - lying off furniture with pain, an impact sound or distress signs
+  - visibly hurt and making a pain sound
+- **Tool descriptions** now say when to use each tool, and `confidence` and `reason` have guidance.
+
+## Still open
+
+- Nod answer-mode and the sound-label gate.
+- Wiring approved plans to the executor WebSocket.
+- Scene change detection on the live camera.
+
 
 ## Open questions
 

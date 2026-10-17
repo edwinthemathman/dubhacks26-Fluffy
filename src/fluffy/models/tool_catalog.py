@@ -120,8 +120,18 @@ def _device_call_model(args_model: type[BaseModel]) -> type[BaseModel]:
     return create_model(
         f"{args_model.__name__}Call",
         __base__=args_model,
-        confidence=(float, Field(ge=0, le=1)),
-        reason=(str, ...),
+        confidence=(
+            float,
+            Field(
+                ge=0,
+                le=1,
+                description="0.8-1.0 plainly seen or heard, 0.5-0.7 likely, lower if guessing.",
+            ),
+        ),
+        reason=(
+            str,
+            Field(description="At most 6 words on what you saw or heard, e.g. 'fell, not getting up'."),
+        ),
     )
 
 
@@ -138,20 +148,45 @@ def _spec(
 SPECS: dict[str, ToolSpec] = {
     spec.name: spec
     for spec in [
-        _spec("dim_lights", "Change a light's brightness. 0 is off.", "comfort", DimLightsArgs),
-        _spec("set_light_warmth", "Change a light's warmth.", "comfort", SetLightWarmthArgs),
+        _spec(
+            "dim_lights",
+            "Change a light's brightness, 0 is off. Use 10-30 when someone dozes off, "
+            "30-40 on a light they shield their eyes from, 70-100 in a dark room or on arrival. "
+            "A proposal: the person is asked first.",
+            "comfort",
+            DimLightsArgs,
+        ),
+        _spec(
+            "set_light_warmth",
+            "Change a light's warmth. Warm when someone is winding down or falling asleep.",
+            "comfort",
+            SetLightWarmthArgs,
+        ),
         _spec("set_blinds", "Move the blinds. 0 is closed, 100 is open.", "comfort", SetBlindsArgs),
         _spec("play_sound", "Play a sound in the room.", "comfort", PlaySoundArgs),
         _spec("stop_sound", "Stop the sound playing in the room.", "comfort", StopSoundArgs),
         _spec(
             "flash_lights",
-            "Pulse the lights as an alert, then restore them.",
+            "Pulse the lights as an alert, then restore them. Use for a doorbell, knock, or alarm, "
+            "especially for someone Deaf or hard of hearing.",
             "notify",
             FlashLightsArgs,
         ),
-        _spec("show_caption", "Show a caption on the companion screen.", "notify", ShowCaptionArgs),
+        _spec(
+            "show_caption",
+            "Show a caption on the companion screen. Pair with flash_lights to say what happened.",
+            "notify",
+            ShowCaptionArgs,
+        ),
         _spec("announce", "Speak a short line in the room.", "notify", AnnounceArgs),
-        _spec("alert_caregiver", "Alert the caregiver.", "safety", AlertCaregiverArgs),
+        _spec(
+            "alert_caregiver",
+            "Get the caregiver. Use when someone falls, ends up on the floor, stays down, "
+            "struggles to get up, or looks hurt or in pain, even if they never say help. "
+            "The person is asked first.",
+            "safety",
+            AlertCaregiverArgs,
+        ),
         _spec("describe_scene", "Describe where things are relative to the person.", "meta", DescribeSceneArgs),
         _spec("find_object", "Find an object in memory or in the live scene.", "meta", FindObjectArgs),
         _spec("read_text", "Read text the camera can see.", "meta", ReadTextArgs),
