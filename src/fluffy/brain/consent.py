@@ -10,8 +10,10 @@ from datetime import datetime
 from typing import Literal
 
 from fluffy.brain.arbiter import LOW_CONFIDENCE, Arbiter
+from fluffy.brain.cues import build_help_plan, help_question, judge
 from fluffy.clock import Clock
 from fluffy.models import Consent, Plan
+from fluffy.perception.scene import SceneState
 from fluffy.profile.model import Profile
 
 UpdateStatus = Literal["approved", "asking", "repeated", "declined", "dropped", "ignored"]
@@ -55,7 +57,16 @@ class ConsentManager:
         profile: Profile,
         *,
         transcript_clear: bool,
+        scene: SceneState | None = None,
     ) -> ConsentUpdate:
+        decision = judge(scene, plan)
+        if decision == "ask_for_help":
+            return self._ask(
+                _held_help_plan(plan, profile, self.clock),
+                profile,
+                question=help_question(profile),
+            )
+
         if (
             self.open is not None
             and profile.questions.style == "one_at_a_time"
@@ -64,8 +75,22 @@ class ConsentManager:
         ):
             return ConsentUpdate(status="ignored", reason="a question is already open")
 
-        plan = _apply_preagreed(plan, profile)
+        if (
+            decision == "act"
+            and plan.trigger.kind != "spoken"
+            and self.arbiter._declined_recently(plan)
+        ):
+            return ConsentUpdate(
+                status="dropped",
+                plan=plan,
+                reason="this offer was declined in the last 30 minutes",
+            )
+
         plan = _apply_spoken_consent(plan, profile, transcript_clear=transcript_clear)
+        if decision == "act" and plan.consent.given_by is None:
+            plan = _apply_cue(plan, self.clock)
+        else:
+            plan = _apply_preagreed(plan, profile)
         verdict = self.arbiter.review(plan)
 
         if verdict.status == "allow":
@@ -119,8 +144,8 @@ class ConsentManager:
             return self._close(False, via=None, reason="no answer")
         return None
 
-    def _ask(self, plan: Plan, profile: Profile) -> ConsentUpdate:
-        question = _question_for(plan)
+    def _ask(self, plan: Plan, profile: Profile, question: str | None = None) -> ConsentUpdate:
+        question = question or _question_for(plan)
         plan = plan.model_copy(
             update={"consent": Consent(required=True, question=question)}
         )
@@ -206,19 +231,37 @@ def _apply_spoken_consent(plan: Plan, profile: Profile, *, transcript_clear: boo
     return plan.model_copy(update={"consent": consent})
 
 
+def _apply_cue(plan: Plan, clock: Clock) -> Plan:
+    consent = Consent(required=True, given_by="cue", at=clock.now())
+    return plan.model_copy(update={"consent": consent})
+
+
+def _held_help_plan(plan: Plan, profile: Profile, clock: Clock) -> Plan:
+    """The caregiver call, held until the person says yes.
+
+    A dim-the-lights idea during a fall is not what a yes should approve.
+    """
+    if plan.actions and all(action.tool == "alert_caregiver" for action in plan.actions):
+        return plan.model_copy(
+            update={
+                "action_class": "safety",
+                "intent": f"Call {profile.agreements.caregiver} for help",
+                "consent": Consent(required=True),
+                "trigger": plan.trigger.model_copy(update={"kind": "safety"}),
+            }
+        )
+    return build_help_plan(clock, profile)
+
+
 def _apply_preagreed(plan: Plan, profile: Profile) -> Plan:
     if plan.consent.given_by is not None:
         return plan
-    allowed = (
-        plan.action_class == "notify"
-        and profile.agreements.notify
-        or plan.action_class == "safety"
-        and profile.agreements.safety
-    )
-    if not allowed:
+    if any(action.tool == "alert_caregiver" for action in plan.actions):
         return plan
-    consent = Consent(required=False, given_by="profile")
-    return plan.model_copy(update={"consent": consent})
+    if plan.action_class == "notify" and profile.agreements.notify:
+        consent = Consent(required=False, given_by="profile")
+        return plan.model_copy(update={"consent": consent})
+    return plan
 
 
 def _question_for(plan: Plan) -> str:

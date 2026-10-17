@@ -1,8 +1,8 @@
 """Checks a plan before it can leave inference.
 
-Comfort plans need consent. Inferred offers below 0.7 confidence are logged
-and not asked. Offers are limited to one every two minutes, and a declined
-offer stays declined for 30 minutes.
+Comfort plans need consent unless a clear cue already supplied it.
+A caregiver call always waits for a yes. Offers are limited to one every
+two minutes, and a declined offer stays declined for 30 minutes.
 """
 
 import json
@@ -41,18 +41,22 @@ class Arbiter:
         self.declined: dict[str, datetime] = {}
 
     def review(self, plan: Plan) -> Verdict:
+        if _calls_caregiver(plan):
+            if plan.consent.given_by is None:
+                return Verdict("needs_consent", "ask before calling for help")
+            return Verdict("allow", "caregiver call was accepted")
         if plan.action_class != "comfort":
-            return Verdict("allow", "notify and safety are pre-agreed")
+            return Verdict("allow", "notify is pre-agreed")
         if plan.consent.given_by is not None:
             return Verdict("allow", "consent already given")
 
         inferred = plan.trigger.kind == "inferred"
-        if inferred and plan.confidence < LOW_CONFIDENCE:
-            return Verdict("considered", "inferred offer below 0.7 confidence")
         if self._declined_recently(plan):
             return Verdict("drop", "this offer was declined in the last 30 minutes")
         if inferred and self._offer_rate_limited():
             return Verdict("drop", "already offered something in the last 2 minutes")
+        if inferred and plan.confidence < LOW_CONFIDENCE:
+            return Verdict("needs_consent", "confidence below 0.7, so ask first")
         return Verdict("needs_consent", "comfort changes wait for a yes")
 
     def note_offer(self) -> None:
@@ -73,3 +77,7 @@ class Arbiter:
     def _offer_rate_limited(self) -> bool:
         cutoff = self.clock.now() - OFFER_WINDOW
         return any(at >= cutoff for at in self.offered_at)
+
+
+def _calls_caregiver(plan: Plan) -> bool:
+    return any(action.tool == "alert_caregiver" for action in plan.actions)

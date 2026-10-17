@@ -153,16 +153,17 @@ def test_cognitive_profile_repeats_once_then_declines():
     assert update.status == "declined"
 
 
-def test_low_confidence_inferred_offer_is_only_logged():
+def test_low_confidence_inferred_offer_is_asked():
     manager, clock = _manager()
     update = manager.consider(
         dim_plan(clock, confidence=0.69),
         profiles()["blind"],
         transcript_clear=True,
     )
-    assert update.status == "dropped"
-    assert "0.7" in update.reason
-    assert manager.open is None
+    assert update.status == "asking"
+    assert update.release is False
+    assert update.question == "Dim the floor lamp?"
+    assert manager.open is not None
 
 
 def test_only_one_inferred_offer_every_two_minutes():
