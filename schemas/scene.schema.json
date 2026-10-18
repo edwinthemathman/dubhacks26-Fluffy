@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "SceneObject": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "enum": [
+            "keys",
+            "phone",
+            "glasses",
+            "wallet",
+            "pill_organizer",
+            "cane",
+            "hearing_aids"
+          ],
+          "title": "Name",
+          "type": "string"
+        },
+        "location_desc": {
+          "title": "Location Desc",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "location_desc"
+      ],
+      "title": "SceneObject",
+      "type": "object"
+    },
+    "ScenePerson": {
+      "additionalProperties": true,
+      "properties": {
+        "posture": {
+          "title": "Posture",
+          "type": "string"
+        },
+        "on_floor": {
+          "title": "On Floor",
+          "type": "boolean"
+        },
+        "location_surface": {
+          "enum": [
+            "floor",
+            "sofa",
+            "bed"
+          ],
+          "title": "Location Surface",
+          "type": "string"
+        },
+        "eyes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Eyes"
+        },
+        "gesture": {
+          "anyOf": [
+            {
+              "enum": [
+                "pointing",
+                "shielding_eyes",
+                "waving"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gesture"
+        },
+        "attention_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Device id from home.toml, when the person is attending to one.",
+          "title": "Attention Target"
+        }
+      },
+      "required": [
+        "posture",
+        "on_floor",
+        "location_surface"
+      ],
+      "title": "ScenePerson",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "room": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Room"
+    },
+    "people": {
+      "items": {
+        "$ref": "#/$defs/ScenePerson"
+      },
+      "title": "People",
+      "type": "array"
+    },
+    "objects_seen": {
+      "items": {
+        "$ref": "#/$defs/SceneObject"
+      },
+      "title": "Objects Seen",
+      "type": "array"
+    },
+    "text_present": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Visible text, or a boolean when only presence is known.",
+      "title": "Text Present"
+    },
+    "lighting": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lighting"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "number"
+    }
+  },
+  "required": [
+    "summary",
+    "confidence"
+  ],
+  "title": "SceneState",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

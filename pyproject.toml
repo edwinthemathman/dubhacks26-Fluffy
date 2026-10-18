@@ -1,7 +1,7 @@
 [project]
 name = "fluffy"
-version = "0.0.1"
-description = "Fluffy inference: perception, world model, consent, and safety."
+version = "0.1.0"
+description = "Fluffy: the live companion decides, and the execution harness applies approved plans."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -18,19 +18,30 @@ dependencies = [
 dev = [
     "opencv-python>=5.0.0.93",
     "pytest>=8",
+    "pytest-asyncio>=0.24",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "opencv-python>=5.0.0.93",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+fluffy = "fluffy.cli:main"
+fluffy-demo = "fluffy.demo.app:main"
+fluffy-live = "fluffy.live.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
-
-[project.scripts]
-fluffy-demo = "fluffy.demo.app:main"
-fluffy-live = "fluffy.live.server:main"
+where = ["src", "."]
+include = ["fluffy*", "mockhome*", "executor_stub*"]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 pythonpath = [".", "src"]
 testpaths = ["tests"]

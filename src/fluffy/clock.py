@@ -1,4 +1,6 @@
-"""Clocks so tests can freeze or advance time."""
+"""Clocks so tests can freeze time and the harness can read the wall clock."""
+
+from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
@@ -8,11 +10,18 @@ class Clock:
         return datetime.now(timezone.utc)
 
 
+class SystemClock(Clock):
+    """Wall clock used by the executor and the mock home."""
+
+
 class FrozenClock:
     """A clock that only moves when a test calls `advance`."""
 
-    def __init__(self, start: datetime | None = None) -> None:
-        self._now = start or datetime(2026, 10, 17, 21, 0, tzinfo=timezone.utc)
+    def __init__(self, start: datetime | None = None, now: datetime | None = None) -> None:
+        chosen = start or now or datetime(2026, 10, 17, 21, 0, tzinfo=timezone.utc)
+        if chosen.tzinfo is None:
+            chosen = chosen.replace(tzinfo=timezone.utc)
+        self._now = chosen
 
     def now(self) -> datetime:
         return self._now

@@ -1,0 +1,230 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+/* results panel entrance */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-rise-in {
+  animation: rise-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* staggered chip entrance: fade in + slide from the left */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.animate-pop-in {
+  animation: pop-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* gradient shimmer sweeping thru text (thinking label) */
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.shimmer-text {
+  color: transparent;
+  background-image: linear-gradient(
+    100deg,
+    #737373 0%,
+    #737373 35%,
+    #a78bfa 45%,
+    #60a5fa 52%,
+    #737373 62%,
+    #737373 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  /* exactly two passes per phrase; ThinkingLabel swaps text right after */
+  animation: shimmer var(--shimmer-ms, 2400ms) linear 2 both;
+}
+
+/* gentle content swap inside an already mounted panel */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out both;
+}
+
+/* modal panel: transform only (never opacity) so nothing behind it can show
+   through the panel mid-animation; the backdrop handles the fade */
+@keyframes modal-in {
+  from {
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-modal-in {
+  animation: modal-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes modal-out {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(4px) scale(0.98);
+  }
+}
+.animate-modal-out {
+  animation: modal-out 0.1s ease-in both;
+}
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.animate-fade-out {
+  animation: fade-out 0.1s ease-in both;
+}
+
+/* left-to-right json tree connectors */
+.tree-children {
+  --line: #d4d4d4;
+  --gap: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-left: var(--gap);
+  padding-left: var(--gap);
+  position: relative;
+}
+.tree-child {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* horizontal stub from the vertical spine to the node */
+.tree-child::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--gap));
+  top: 50%;
+  width: var(--gap);
+  border-top: 1.5px solid var(--line);
+}
+/* vertical spine segment */
+.tree-child::after {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--gap));
+  top: 0;
+  bottom: 0;
+  border-left: 1.5px solid var(--line);
+}
+.tree-child:first-child::after {
+  top: 50%;
+}
+.tree-child:last-child::after {
+  bottom: 50%;
+}
+.tree-child:only-child::after {
+  display: none;
+}
+/* stub from parent node into the spine */
+.tree-children::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--gap));
+  top: 50%;
+  width: var(--gap);
+  border-top: 1.5px solid var(--line);
+}
+
+/* audio scrubber: thin track w/ played portion tinted, round thumb */
+.audio-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+.audio-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #171717 0,
+    #171717 var(--pct, 0%),
+    #e5e5e5 var(--pct, 0%),
+    #e5e5e5 100%
+  );
+}
+.audio-range::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: #e5e5e5;
+}
+.audio-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 9999px;
+  background: #171717;
+}
+.audio-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -5px;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 1.5px solid #171717;
+}
+.audio-range::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 1.5px solid #171717;
+}

@@ -1,0 +1,15 @@
+[room.living_room]
+lights = { "lamp.living_floor" = "floor lamp next to the sofa", "light.living_ceiling" = "ceiling light" }
+blinds = ["blinds.living_window"]
+speaker = "speaker.living"
+display = "companion.living" # the companion screen (Part 3 renders it)
+
+[sounds]
+names = ["rain", "chime", "white_noise", "doorbell"]
+
+[alerts]
+colors = ["blue", "red", "amber", "white"]
+patterns = ["pulse1", "pulse3", "strobe"]
+
+[caregiver]
+name = "Alex"
