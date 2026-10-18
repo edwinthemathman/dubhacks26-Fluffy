@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeEvent } from "@/lib/fluffy/normalizeEvent";
 import { thinkingLabel } from "@/lib/fluffy/phrases";
-import { createSession, reduceSession } from "@/lib/fluffy/reducer";
+import { createSession, dedupeTurns, reduceSession } from "@/lib/fluffy/reducer";
 import type { CanonicalEvent, SessionState } from "@/lib/fluffy/types";
 
 const NOW = 1_700_000_000_000;
@@ -142,5 +142,43 @@ describe("session reducer", () => {
     expect(
       thinkingLabel(createSession(), { ...sensing, inferenceAvailable: true }),
     ).toBe("Watching and listening");
+  });
+
+  it("keeps one turn when the server echoes the request id as the turn id", () => {
+    const submitted = apply([{ type: "submit", requestId: "req_4eac7daf-dbc6-4938-aaa4-50edd7bcc004", text: "dim the lamp" }]);
+    const started = feed(submitted, {
+      type: "turn.start",
+      turn_id: "req_4eac7daf-dbc6-4938-aaa4-50edd7bcc004",
+      kind: "text",
+      trigger: "dim the lamp",
+    });
+    expect(started.turns).toHaveLength(1);
+    expect(new Set(started.turns.map((turn) => turn.id)).size).toBe(1);
+  });
+
+  it("collapses a turn that was already stored twice", () => {
+    const once = apply([{ type: "submit", requestId: "req_4eac7daf-dbc6-4938-aaa4-50edd7bcc004", text: "dim the lamp" }]);
+    const withResult = {
+      ...once.turns[0],
+      planId: "pln_1",
+      actionIds: ["act_1"],
+      observations: [{ text: "Perceptron proposed a dim.", at: NOW }],
+    };
+    const duplicated = { ...once, turns: [withResult, { ...once.turns[0], open: false }] };
+    const collapsed = dedupeTurns(duplicated).turns;
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0].planId).toBe("pln_1");
+    expect(collapsed[0].actionIds).toEqual(["act_1"]);
+    expect(collapsed[0].observations.map((item) => item.text)).toEqual(["Perceptron proposed a dim."]);
+    expect(collapsed[0].text).toBe("dim the lamp");
+  });
+
+  it("keeps distinct requests as separate turns", () => {
+    const state = apply([
+      { type: "submit", requestId: "req_one", text: "dim the lamp" },
+      { type: "submit", requestId: "req_two", text: "open the blinds" },
+    ]);
+    expect(state.turns.map((turn) => turn.requestId)).toEqual(["req_one", "req_two"]);
+    expect(new Set(state.turns.map((turn) => turn.id)).size).toBe(2);
   });
 });

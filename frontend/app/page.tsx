@@ -11,6 +11,7 @@ import PlanBody, { Noticed } from "@/components/PlanBody";
 import ThinkingLabel from "@/components/ThinkingLabel";
 import { useTypewriter } from "@/lib/useTypewriter";
 import { EXAMPLE_CUES } from "@/lib/scenes";
+import { dedupeTurns } from "@/lib/fluffy/reducer";
 import { useSession } from "@/providers/FluffySessionProvider";
 
 type View = "intent" | "actions" | "evidence";
@@ -26,7 +27,7 @@ export default function Home() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [view, setView] = useState<View>("intent");
   const [pinned, setPinned] = useState(false);
-  const turns = session.state.turns;
+  const turns = dedupeTurns(session.state).turns;
   const submitted = turns.length > 0;
   const latest = turns[turns.length - 1];
   const plan = latest?.planId ? session.state.plans[latest.planId] : undefined;

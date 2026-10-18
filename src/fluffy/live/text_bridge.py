@@ -83,7 +83,11 @@ async def submit_text(
         return runtime.idempotent[request_id]
     decision = await interpreter.interpret(text)
     session_id = runtime.settings.session_id
-    await runtime.emit(session_id, "turn.start", {"turn_id": request_id, "kind": "text" if explicit else "speech", "trigger": text[:80]})
+    await runtime.emit(
+        session_id,
+        "turn.start",
+        {"turn_id": request_id, "request_id": request_id, "kind": "text" if explicit else "speech", "trigger": text[:80]},
+    )
     if decision.error:
         await runtime.emit(session_id, "think", {"turn_id": request_id, "note": decision.error[:180]})
         result = {"status": "unavailable", "request_id": request_id, "message": decision.error, "completed": False}

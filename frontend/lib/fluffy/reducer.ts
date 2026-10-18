@@ -67,7 +67,7 @@ export function reduceSession(state: SessionState, event: CanonicalEvent, option
   let next = noteStream(state, event);
   if (next == null) return state;
   next = apply(next, event, now, historical);
-  return next;
+  return dedupeTurns(next);
 }
 
 /** Null means the event was a duplicate in this epoch. */
@@ -237,7 +237,9 @@ function apply(state: SessionState, event: CanonicalEvent, now: number, historic
 }
 
 function startTurn(state: SessionState, event: Extract<CanonicalEvent, { type: "turn.start" }>, now: number): SessionState {
-  const existing = event.requestId ? state.turns.find((turn) => turn.requestId === event.requestId) : undefined;
+  const existing = state.turns.find((turn) =>
+    (event.requestId != null && turn.requestId === event.requestId) || turn.id === event.turnId || turn.requestId === event.turnId,
+  );
   if (existing) {
     return {
       ...state,
@@ -259,7 +261,55 @@ function startTurn(state: SessionState, event: Extract<CanonicalEvent, { type: "
 }
 
 function pushTurn(state: SessionState, turn: TurnModel, base: SessionState = state): SessionState {
-  return { ...base, turns: trim([...base.turns, turn], TURN_LIMIT) };
+  const turns = dedupeTurnList([...base.turns, turn]);
+  return { ...base, turns: trim(turns, TURN_LIMIT) };
+}
+
+export function dedupeTurns(state: SessionState): SessionState {
+  const turns = dedupeTurnList(state.turns);
+  if (turns.length === state.turns.length && turns.every((turn, index) => turn === state.turns[index])) return state;
+  return { ...state, turns };
+}
+
+function dedupeTurnList(turns: TurnModel[]): TurnModel[] {
+  const indexById = new Map<string, number>();
+  const result: TurnModel[] = [];
+  for (const turn of turns) {
+    const at = indexById.get(turn.id);
+    if (at == null) {
+      indexById.set(turn.id, result.length);
+      result.push(turn);
+      continue;
+    }
+    result[at] = mergeTurn(result[at], turn);
+  }
+  return result;
+}
+
+function mergeTurn(current: TurnModel, incoming: TurnModel): TurnModel {
+  const observations = [...current.observations];
+  for (const item of incoming.observations) {
+    if (!observations.some((existing) => existing.at === item.at && existing.text === item.text)) observations.push(item);
+  }
+  const actionIds = [...current.actionIds];
+  for (const id of incoming.actionIds) {
+    if (!actionIds.includes(id)) actionIds.push(id);
+  }
+  return {
+    ...current,
+    requestId: incoming.requestId ?? current.requestId,
+    text: incoming.text || current.text,
+    source: incoming.source === "system" ? current.source : incoming.source,
+    planId: incoming.planId ?? current.planId,
+    observations,
+    actionIds,
+    open: current.open || incoming.open,
+    recorded: current.recorded || incoming.recorded,
+    recordedRows: incoming.recordedRows ?? current.recordedRows,
+    recordedSpoken: incoming.recordedSpoken ?? current.recordedSpoken,
+    recordedConfirm: incoming.recordedConfirm ?? current.recordedConfirm,
+    recordedConfirmed: current.recordedConfirmed || incoming.recordedConfirmed,
+  };
 }
 
 function addObservation(state: SessionState, text: string, turnId: string | undefined, now: number, pending: boolean): SessionState {
