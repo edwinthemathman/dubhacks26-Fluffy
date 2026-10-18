@@ -156,7 +156,7 @@ def derive(scene: SceneState | None) -> set[str]:
     for person in scene.people:
         if _looks_hurt(person, sounds):
             cues.add("fall")
-        if person.gesture == "shielding_eyes":
+        if person.gesture == "shielding_eyes" or _squint_label(person):
             cues.add("glare")
         if person.gesture == "stop":
             cues.add("stop_music")
@@ -326,11 +326,40 @@ def _arriving(scene: SceneState, sounds: set[str]) -> bool:
     return any(person.posture == "walking" for person in scene.people)
 
 
+def squint_determined(scene: SceneState | None, *, held: bool = False) -> bool:
+    """The squint has stayed, or they squinted again in this same clip.
+
+    `held` is the live rule: glare only survives once it has stayed in view.
+    One squint, glasses glare, and bright eyes are not a decision.
+    """
+    if scene is None:
+        return False
+    people = [person for person in scene.people if not person.on_screen]
+    if held and any(person.gesture == "shielding_eyes" or _squint_label(person) for person in people):
+        return True
+    return any(_held_squint(person) for person in people)
+
+
+def _squint_label(person) -> bool:
+    return any(item.label == "hold_text_far_or_squint" for item in person.actions)
+
+
+def _held_squint(person) -> bool:
+    return any(item.label == "hold_text_far_or_squint" and item.count >= 2 for item in person.actions)
+
+
 def _matches(cues: set[str], plan: Plan) -> bool:
     if not plan.actions:
         return False
-    if any(action.tool not in LIGHT_TOOLS for action in plan.actions):
+    allowed = set(LIGHT_TOOLS)
+    if "glare" in cues:
+        allowed.add("set_blinds")
+    if any(action.tool not in allowed for action in plan.actions):
         return False
+    if "glare" in cues and any(action.tool == "set_blinds" for action in plan.actions):
+        positions = [action.args.get("position") for action in plan.actions if action.tool == "set_blinds"]
+        if any(not isinstance(position, (int, float)) or position > 20 for position in positions):
+            return False
     level = next(
         (
             action.args.get("luminosity")

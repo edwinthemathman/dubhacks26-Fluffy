@@ -8,7 +8,7 @@ import FlowLines from "@/components/FlowLines";
 import HomeOutcome from "@/components/HomeOutcome";
 import NotchedPanel from "@/components/NotchedPanel";
 import PlanBody, { Noticed } from "@/components/PlanBody";
-import ThinkingLabel from "@/components/ThinkingLabel";
+import { FluffyLiveMascot } from "@/components/FluffyMascot";
 import { useTypewriter } from "@/lib/useTypewriter";
 import { EXAMPLE_CUES } from "@/lib/scenes";
 import { activityTurn, dedupeTurns } from "@/lib/fluffy/reducer";
@@ -34,8 +34,7 @@ export default function Home() {
   const earlier = turns.filter((turn) => turn.id !== latest?.id);
   const plan = latest?.planId ? session.state.plans[latest.planId] : undefined;
   const actions = (latest?.actionIds ?? []).map((id) => session.state.actions[id]).filter((item) => item != null);
-  const busyLabel = session.stageLabel;
-  const showThinking = (Boolean(busyLabel) || session.state.thinking.length > 0 || Boolean(session.state.lastSeen) || Boolean(session.state.raw)) && !latest?.recorded;
+  const showThinking = (session.state.thinking.length > 0 || Boolean(session.state.lastSeen) || Boolean(session.state.raw)) && !latest?.recorded;
   const typewriter = useTypewriter(EXAMPLE_CUES, { active: session.draft.length === 0 && !session.recordedDemo });
   const placeholder = session.recordedDemo ? "Try a recorded line, like “ugh, it's bright”" : typewriter.text + (typewriter.cursor ? "|" : "");
 
@@ -84,6 +83,8 @@ export default function Home() {
               A loose cue becomes a quiet change in the home.
             </p>
           </div>
+
+          <FluffyLiveMascot />
 
           <form data-bg-clear onSubmit={handleSubmit} className="relative z-10 flex flex-col gap-3">
             {(session.state.captions.at(-1) || (latest?.recorded && latest.recordedSpoken) || session.state.question) ? (
@@ -163,11 +164,6 @@ export default function Home() {
           <div data-bg-clear className="mx-auto w-full max-w-4xl">
             <NotchedPanel className="animate-rise-in" title="Fluffy">
               <div className="max-h-[180px] min-h-[180px] overflow-y-auto rounded-xl border border-neutral-200 p-4">
-                {busyLabel ? (
-                  <p className={"text-sm text-neutral-500 " + (session.state.thinking.length ? "mb-3" : "flex min-h-[148px] items-center justify-center")}>
-                    <ThinkingLabel label={busyLabel} />
-                  </p>
-                ) : null}
                 {session.state.lastSeen ? (
                   <p className={"text-sm text-neutral-600 " + (session.state.thinking.length ? "mb-3" : "")}>{session.state.lastSeen}</p>
                 ) : null}
@@ -212,11 +208,6 @@ export default function Home() {
               }
             >
               {plan ? <PlanBody plan={plan} view={view} /> : <p className="text-sm text-neutral-500">This scene is played from the recorded demo.</p>}
-              {busyLabel && !latest.recorded ? (
-                <p className="mt-3 flex justify-center">
-                  <ThinkingLabel label={busyLabel} />
-                </p>
-              ) : null}
               {plan ? (
                 <details className="mt-4">
                   <summary className="cursor-pointer text-xs text-neutral-400">JSON</summary>
@@ -252,6 +243,8 @@ export default function Home() {
                 onAnswer={(choice) => void session.answerQuestion(choice)}
                 recordedConfirm={latest?.recordedConfirm}
                 recordedConfirmed={latest?.recordedConfirmed}
+                actionClass={plan?.actionClass}
+                incident={session.state.incident != null}
                 onRecordedConfirm={() => latest?.requestId && session.confirmRecorded(latest.requestId)}
               />
             </AutoHeight>

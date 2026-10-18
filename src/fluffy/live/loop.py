@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
 from fluffy.brain.cues import NOTIFY_SOUNDS, cap_confidence, derive, unidentified_sound, volume_request, wants_music_stop
-from fluffy.brain.decide import _plan_from_devices, complete_paired_request
+from fluffy.brain.decide import _plan_from_devices, complete_paired_request, ensure_eye_relief
 from fluffy.brain.instincts import Guess, Instincts
 from fluffy.brain.objects import ObjectNotice, important_for, object_notices, tag_lines, wants_room_scan
 from fluffy.brain.habits import HabitBook, habit_note, habit_why
@@ -1684,6 +1684,14 @@ class LiveLoop:
             ids=self.ids,
         )
         plan = complete_paired_request(plan, request.utterance or "")
+        plan = ensure_eye_relief(
+            plan,
+            self.scene,
+            profile=self.profile,
+            clock=self.clock,
+            ids=self.ids,
+            held="glare" in request.cues,
+        )
         plan = cap_confidence(plan, set(request.cues) | derive(self.scene), self.scene)
         reasons = {call.name: call.reason for call in result.device}
         # Falls belong to the safety check-in ("Are you okay?", then the caregiver),

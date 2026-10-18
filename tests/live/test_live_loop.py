@@ -15,7 +15,7 @@ from fluffy.live.loop import LiveLoop, LiveSettings
 from fluffy.live.perceive import Decision, Read
 from fluffy.live.server import FRAME_HEADER, create_app, handle_binary
 from fluffy.models.tool_catalog import parse_call
-from fluffy.perception.scene import PersonState, SceneState, SoundRead
+from fluffy.perception.scene import PersonAction, PersonState, SceneState, SoundRead
 
 from tests.inference.helpers import profiles
 
@@ -334,6 +334,57 @@ def test_glare_has_to_stay_before_it_asks():
         await settle(loop)
         assert any(event["type"] == "sense.see" and "cue: glare" in event["chips"] for event in events)
         assert fake.decide_calls and "glare" in fake.decide_calls[-1]["cues"]
+        assert loop.home.state["lamp"]["luminosity"] == 35
+        assert loop.home.state["ceiling"]["luminosity"] == 35
+        assert loop.home.state["blinds"] == 0
+
+    asyncio.run(run())
+
+
+def test_a_squint_that_stays_dims_the_room_and_closes_the_blinds():
+    async def run():
+        loop, fake, clock, _ = make(heartbeat_s=1, glare_hold_s=8)
+        fake.scene = SceneState(
+            people=[
+                PersonState(
+                    posture="sitting",
+                    eyes="open",
+                    actions=[PersonAction(label="hold_text_far_or_squint", count=1)],
+                )
+            ],
+            lighting="bright",
+            summary="squinting",
+        )
+        feed_frames(loop, clock)
+        await settle(loop)
+        assert loop.home.state["blinds"] == 55
+        clock.advance(9)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        assert loop.home.state["lamp"]["luminosity"] == 35
+        assert loop.home.state["ceiling"]["luminosity"] == 35
+        assert loop.home.state["blinds"] == 0
+
+    asyncio.run(run())
+
+
+def test_one_squint_does_not_move_the_room():
+    async def run():
+        loop, fake, clock, _ = make(heartbeat_s=1, glare_hold_s=8)
+        fake.scene = SceneState(
+            people=[
+                PersonState(
+                    posture="sitting",
+                    eyes="open",
+                    actions=[PersonAction(label="hold_text_far_or_squint", count=1)],
+                )
+            ],
+            lighting="bright",
+        )
+        feed_frames(loop, clock)
+        await settle(loop)
+        assert loop.home.state["lamp"]["luminosity"] == 78
+        assert loop.home.state["blinds"] == 55
 
     asyncio.run(run())
 

@@ -12,7 +12,7 @@ export default function Sidebar({ className = "" }: { className?: string }) {
       <FluffyBrand className="px-2 text-[26px] leading-none" />
       <nav className="mt-6 flex flex-col gap-1" aria-label="Primary">
         <NavLink href="/" label="Fluffy" icon={<ChatIcon />} />
-        <NavLink href="/room" label="Room" icon={<RoomIcon />} />
+        <NavLink href="/roomui" label="Room" icon={<RoomIcon />} />
       </nav>
       <SidebarStatus />
     </aside>

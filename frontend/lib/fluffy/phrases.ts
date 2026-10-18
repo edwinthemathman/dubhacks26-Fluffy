@@ -78,7 +78,7 @@ export function statusPhrase(action: ActionModel, home: HomeModel): string {
 
 export function thinkingLabel(state: SessionState, sensing: SensingFacts): string {
   if (state.question && !state.question.answer) return state.question.text;
-  const action = latestMeaningfulAction(state);
+  const action = currentAction(state);
   if (action && action.status !== "proposed" && action.status !== "approved") {
     return action.summary ?? statusPhrase(action, state.home);
   }
@@ -94,7 +94,7 @@ export function thinkingLabel(state: SessionState, sensing: SensingFacts): strin
   return "";
 }
 
-function latestMeaningfulAction(state: SessionState): ActionModel | null {
+export function currentAction(state: SessionState): ActionModel | null {
   const turn = [...state.turns].reverse().find((item) => item.open) ?? state.turns[state.turns.length - 1];
   if (!turn) return null;
   const rows = turn.actionIds.map((id) => state.actions[id]).filter((item): item is ActionModel => item != null);

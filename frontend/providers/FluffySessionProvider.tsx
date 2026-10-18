@@ -5,6 +5,7 @@ import { SpeechPlayer } from "@/lib/audio/player";
 import { getJson, healthUrl, postJson, questionUrl, sessionUrl, stateUrl, stopUrl, textInputUrl, toolsUrl, transcriptUrl } from "@/lib/fluffy/client";
 import { readPublicConfig, type FluffyPublicConfig } from "@/lib/fluffy/config";
 import { normalizeEvent } from "@/lib/fluffy/normalizeEvent";
+import { MASCOT_MS } from "@/lib/fluffy/mascot";
 import { thinkingLabel, type SensingFacts } from "@/lib/fluffy/phrases";
 import { sceneToRecorded } from "@/lib/fluffy/recorded";
 import { createSession, reduceSession } from "@/lib/fluffy/reducer";
@@ -26,6 +27,7 @@ type SessionApi = {
   sensing: CapturePhase;
   sensingFacts: SensingFacts;
   stageLabel: string;
+  greeting: boolean;
   stream: MediaStream | null;
   now: number;
   submitText: () => Promise<void>;
@@ -64,6 +66,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [started, setStarted] = useState(false);
+  const [greeting, setGreeting] = useState(false);
   const [speech, setSpeech] = useState<SpeechPhase>({ listening: false, phrase: "", error: null });
   const stateRef = useRef(state);
   const socketRef = useRef<WebSocket | null>(null);
@@ -311,6 +314,12 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     apply({ type: "notice", text: "Answer sent. Waiting for the backend." });
   }, [answering, apply, config]);
 
+  useEffect(() => {
+    if (!greeting) return;
+    const timer = window.setTimeout(() => setGreeting(false), MASCOT_MS.greeting);
+    return () => window.clearTimeout(timer);
+  }, [greeting]);
+
   const startFluffy = useCallback(async () => {
     const capture = captureRef.current;
     if (!capture) return;
@@ -319,6 +328,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     void postJson(`${config.httpBase}/api/session/speaker`, { client_id: clientIdRef.current });
     setStarted(true);
     setPaused(false);
+    setGreeting(true);
     setStream(capture.previewStream());
   }, [config.httpBase]);
 
@@ -340,6 +350,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     setStream(null);
     setStarted(false);
     setPaused(false);
+    setGreeting(false);
     if (config.contract === "execution-v2") {
       const result = await postJson(stopUrl(config), { session_id: stateRef.current.sessionId });
       if (result.missing) {
@@ -385,6 +396,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     sensing,
     sensingFacts,
     stageLabel,
+    greeting,
     stream,
     now,
     submitText,

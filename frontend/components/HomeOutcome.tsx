@@ -1,3 +1,5 @@
+import { FluffyMascot } from "@/components/FluffyMascot";
+import { historyActivity, type MascotActivity } from "@/lib/fluffy/mascot";
 import type { ActionModel, QuestionModel } from "@/lib/fluffy/types";
 import { toolTitle } from "@/lib/fluffy/phrases";
 
@@ -11,6 +13,8 @@ export default function HomeOutcome({
   onRecordedConfirm,
   recordedConfirm,
   recordedConfirmed,
+  actionClass,
+  incident,
 }: {
   actions: ActionModel[];
   recorded?: boolean;
@@ -21,6 +25,8 @@ export default function HomeOutcome({
   onRecordedConfirm?: () => void;
   recordedConfirm?: { question: string } | null;
   recordedConfirmed?: boolean;
+  actionClass?: string;
+  incident?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -31,12 +37,17 @@ export default function HomeOutcome({
         {recorded
           ? (recordedRows ?? []).map((row, i) => (
               <li key={row.label + row.to} className="animate-pop-in" style={{ animationDelay: `${i * 90}ms` }}>
-                <Row label={row.label} detail={`${row.from} → ${row.to}`} status="Recorded" />
+                <Row label={row.label} detail={`${row.from} → ${row.to}`} status="Recorded" activity="idle" />
               </li>
             ))
           : actions.map((action, i) => (
               <li key={action.id} className="animate-pop-in" style={{ animationDelay: `${i * 90}ms` }}>
-                <Row label={toolTitle(action.tool)} detail={action.summary ?? action.status} status={statusChip(action.status)} />
+                <Row
+                  label={toolTitle(action.tool)}
+                  detail={action.summary ?? action.status}
+                  status={statusChip(action.status)}
+                  activity={historyActivity(action, { actionClass, recorded, incident })}
+                />
               </li>
             ))}
       </ul>
@@ -83,10 +94,11 @@ function statusChip(status: ActionModel["status"]): string {
   return "Unknown";
 }
 
-function Row({ label, detail, status }: { label: string; detail: string; status: string }) {
+function Row({ label, detail, status, activity }: { label: string; detail: string; status: string; activity: Exclude<MascotActivity, "greeting"> }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 px-4 py-3">
-      <div>
+      <FluffyMascot activity={activity} still size={32} />
+      <div className="min-w-0 flex-1">
         <p className="text-[15px] font-medium tracking-tight capitalize">{label}</p>
         <p className="text-sm text-neutral-600">{detail}</p>
       </div>

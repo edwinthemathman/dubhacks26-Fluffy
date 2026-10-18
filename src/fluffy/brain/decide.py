@@ -9,9 +9,11 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from fluffy.brain.cues import derive, squint_determined
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
 from fluffy.models import Action, Consent, Plan, Trigger, build_plan
+from fluffy.perception.scene import SceneState
 from fluffy.models.tool_catalog import (
     DEVICE_TOOLS,
     META_TOOLS,
@@ -161,8 +163,9 @@ def system_prompt(profile: Profile) -> str:
             "A missed emergency and a false alarm both matter, and the safety check-in decides.",
             "- Dozing off, eyes closing, lying back to rest: dim_lights luminosity 10-30, "
             "and set_light_warmth warm.",
-            "- A hand covering their eyes against a bright lamp, held there: dim_lights "
-            "luminosity 30-40 on that light. A squint, glasses glare, or bright eyes is not enough.",
+            "- A squint held across the frames, or a hand kept over the eyes: dim_lights "
+            "luminosity 35 for the room and set_blinds position 0. Their eyes hurt. "
+            "One blink, glasses glare, or bright eyes is not enough.",
             "- Room dark, or someone arriving in the dark: dim_lights luminosity 70-100.",
             "- Doorbell, knock, or alarm: flash_lights and show_caption.",
             "- When the words and the picture agree, call every tool they ask for, in the same turn: "
@@ -347,6 +350,65 @@ def complete_paired_request(plan: Plan | None, text: str) -> Plan | None:
     if len(actions) == len(plan.actions):
         return plan
     return plan.model_copy(update={"actions": actions, "action_class": "comfort"})
+
+
+def ensure_eye_relief(
+    plan: Plan | None,
+    scene: SceneState | None,
+    *,
+    profile: Profile,
+    clock: Clock,
+    ids: IdFactory,
+    held: bool = False,
+) -> Plan | None:
+    """A determined squint dims the lights and closes the blinds.
+
+    The squint has to stay in view, or happen again in the same clip.
+    A fall still belongs to the safety check-in, so this adds nothing then.
+    """
+    if not squint_determined(scene, held=held) or "fall" in derive(scene):
+        return plan
+    if plan is not None and any(action.tool == "alert_caregiver" for action in plan.actions):
+        return plan
+    actions = [action for action in (plan.actions if plan else []) if action.tool not in {"dim_lights", "set_blinds"}]
+    actions.append(
+        Action(
+            action_id=ids("act"),
+            tool="dim_lights",
+            args={"room": "living_room", "luminosity": 35},
+        )
+    )
+    actions.append(
+        Action(
+            action_id=ids("act"),
+            tool="set_blinds",
+            args={"room": "living_room", "position": 0},
+        )
+    )
+    summary = "They are squinting, so the lights dim and the blinds close."
+    if plan is None:
+        return build_plan(
+            clock=clock,
+            ids=ids,
+            trigger=Trigger(kind="inferred", event="squinting", room="living_room"),
+            action_class="comfort",
+            intent="Ease the light on their eyes",
+            actions=actions,
+            confidence=0.86,
+            consent=Consent(required=True),
+            needs=list(profile.needs),
+            delivered_via=profile.delivery_channels(),
+            reasoning_summary=summary,
+        )
+    confidence = plan.confidence if plan.confidence >= 0.7 else 0.86
+    return plan.model_copy(
+        update={
+            "actions": actions,
+            "action_class": "comfort",
+            "confidence": confidence,
+            "reasoning_summary": summary,
+        }
+    )
 
 
 def _mentions_music(text: str) -> bool:
