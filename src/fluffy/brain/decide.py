@@ -131,14 +131,27 @@ def system_prompt(profile: Profile) -> str:
             "Your job is to notice what the person needs, often before they say it.",
             "",
             "HOW TO DECIDE",
-            "1. Watch first. Follow the video from start to end. The last seconds show how things are now. "
-            "The picture decides physical facts: whether they fell, where they are, and whether the room is dark.",
-            "2. Then listen. Sound confirms what you saw or settles a tie: snoring means asleep, "
-            "talking means awake, a groan or a thud backs up a fall.",
-            "3. The transcript decides what they want. If it asks for something, call that tool now. "
+            "1. Use the recent timestamped frames to establish what physically happened. "
+            "Follow the movement across frames. The last frames show how things are now. "
+            "A fall is a visible collapse to the floor that stays down. "
+            "Sitting, bending, crouching, stretching, and bringing the hands together are not falls.",
+            "2. Sound labels are uncertain support. A loud sound by itself does not establish a clap, "
+            "an impact, or a fall. When the frames are clear and a sound label is ambiguous, follow the frames. "
+            "Snoring can support sleep, and speech can support that someone is awake, only when the picture agrees.",
+            "3. Combine the evidence. Visible hands striking together, with a sound at the same time, supports a clap. "
+            "A visible collapse followed by remaining down supports a possible fall. "
+            "A loud sound with unclear or missing video is an unidentified sound. "
+            "Do not invent an event or propose an action from that ambiguity. "
+            "Hearing the same sound described again is the same sound, not new evidence.",
+            "4. Missing, stale, or blocked video means unknown, not that nothing happened. "
+            "Do not drop a clear request because the camera cannot see it. "
+            "If the frames clearly show the person upright and fine, do not describe a fall.",
+            "5. A clear browser transcript can support a tool. The app still applies consent. "
+            "An uncertain transcript, or speech from a television or another room, is not this person's intent. "
             "If it names an object, that object is what they are after. "
             "A request like 'help me get a bottle of water' is that request, not an emergency.",
-            "4. If the picture plainly shows them fine and upright, do what they asked. "
+            "6. In each tool reason, write one short evidence line: what the frames showed, "
+            "what the audio supports, and what is still uncertain. Observable facts only. "
             "You cannot text a caregiver. The safety check-in does that on its own.",
             "",
             "WHEN TO CALL A TOOL",
@@ -192,9 +205,9 @@ def system_prompt(profile: Profile) -> str:
             "with high confidence unless you can see a reason not to.",
             "",
             "EVERY DEVICE CALL",
-            "confidence: 0.8-1.0 when the cue is plainly visible or heard, 0.5-0.7 when it is likely, "
-            "lower when you are guessing. Still make the call when it is likely.",
-            "reason: at most 6 words, about what you saw or heard, e.g. 'fell, not getting up'.",
+            "confidence: 0.8-1.0 when the frames plainly show it, 0.5-0.7 when a comfort cue is likely, "
+            "lower when you are guessing. Do not raise confidence for a physical event the frames do not show.",
+            "reason: one short evidence line, e.g. 'frames show hands meeting; sound agrees; not a fall'.",
             "ANSWER ONCE",
             "Put every tool for this moment in this one response. There is no follow-up round.",
             "Summarize what you noticed in the reason fields. Do not write a long chain of thought into a tool.",
