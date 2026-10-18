@@ -386,6 +386,29 @@ def test_binary_frames_and_audio_reach_the_loop():
     assert loop.audio.end == 160
 
 
+def test_closing_the_feed_pauses_and_drops_frames():
+    holder: dict = {}
+
+    def factory(emit):
+        loop, *_ = make()
+        loop.emit = emit
+        holder["loop"] = loop
+        return loop
+
+    with TestClient(create_app(loop_factory=factory)) as client:
+        with client.websocket_connect("/ws/live") as socket:
+            socket.send_bytes(FRAME_HEADER.pack(1, 1234, 0.5) + b"jpeg-bytes")
+            # send_bytes can return before the server task reads the frame.
+            for _ in range(20):
+                if holder["loop"].frames.latest is not None:
+                    break
+                client.get("/api/health")
+            assert holder["loop"].paused is False
+            assert holder["loop"].frames.latest.jpeg == b"jpeg-bytes"
+    assert holder["loop"].paused is True
+    assert holder["loop"].frames.latest is None
+
+
 def test_ui_socket_sends_profile_and_room_on_connect():
     def factory(emit):
         loop, *_ = make()

@@ -60,6 +60,7 @@ class Hub:
 def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
     hub = Hub()
     state: dict[str, Any] = {}
+    feeds = 0
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -152,8 +153,11 @@ def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
 
     @app.websocket("/ws/live")
     async def feed(socket: WebSocket) -> None:
+        nonlocal feeds
         await socket.accept()
         live: LiveLoop = state["loop"]
+        feeds += 1
+        live.paused = False
         try:
             while True:
                 message = await socket.receive()
@@ -167,6 +171,10 @@ def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
                         await live.on_client(json.loads(message["text"]))
         except WebSocketDisconnect:
             pass
+        finally:
+            feeds -= 1
+            if feeds == 0:
+                live.on_feed_closed()
 
     return app
 

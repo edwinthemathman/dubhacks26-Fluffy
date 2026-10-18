@@ -43,6 +43,7 @@ uv run python scripts/live_spike.py --watch --decide   # terminal-only live test
 - **`useLiveCapture`** (web): sends JPEG frames 4 times a second, plus a motion score and 16 kHz audio, over `/ws/live`. It doesn't send mic audio while text-to-speech is speaking.
 - **Watch lane:** after motion settles (0.5 s), after 3 s of continuous motion, or every 5 s, it runs a scene read on the last 4 s (8 frames, reasoning none).
 - **Hear lane:** at the end of each burst of sound, it runs a sound read. While a question is open it instead reads a yes, no or help answer. A burst that ends during a read waits, and a newer one replaces it.
+- **Disconnect:** when the last camera socket closes, the loop pauses and drops the buffered frames instead of keeping the last picture.
 - **Decide lane:** a new cue or speech triggers a decision call on the last 6 s plus audio, with tools. A newer trigger replaces a queued one, results older than 10 s are dropped, and a cue is latched for 30 s.
 - **Safety:** a fall or a call for help starts the check-in right away. A model call to `alert_caregiver` also goes through the check-in instead of a second question.
 - **Output:** every step is sent on `/ws/ui` as the web app's existing events, so the Demo and Mind pages show it live.
