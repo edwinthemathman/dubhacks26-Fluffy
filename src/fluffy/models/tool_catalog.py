@@ -96,6 +96,7 @@ class AlertCaregiverArgs(BaseModel):
     severity: Literal["info", "high"]
     message: str
     include_snapshot: bool = False
+    incident_id: str | None = None
 
 
 class DescribeSceneArgs(BaseModel):
@@ -271,9 +272,11 @@ DEVICE_TOOLS = set(SPECS) - META_TOOLS
 
 
 def perceptron_tools() -> list[dict]:
-    """Function schemas for a decision call. Do not combine these with a response schema."""
+    """Function schemas for a decision call. The caregiver tool is not offered."""
     tools = []
     for spec in SPECS.values():
+        if spec.name == "alert_caregiver":
+            continue
         schema = spec.call_model.model_json_schema()
         schema.pop("title", None)
         tools.append(

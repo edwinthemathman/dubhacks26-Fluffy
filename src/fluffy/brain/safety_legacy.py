@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from fluffy.brain.wellbeing import is_okay_phrase, is_request, is_strong_phrase, load_thresholds
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
 from fluffy.models import Action, Consent, Evidence, Plan, Trigger, build_plan
@@ -29,7 +30,6 @@ REASK_TEXT = "Are you okay, or do you need help?"
 SECOND_CHECKIN_S = 30
 ALERT_S = 60
 FOLLOWUP_S = 60
-WATCH_S = 5 * 60
 PAIN_TEXT_S = 15
 
 _OKAY = {"okay", "ok", "yes", "nod", "i'm okay", "im okay", "i am okay", "i'm fine", "im fine", "i am fine"}
@@ -58,40 +58,54 @@ class SafetyMachine:
         self.event_kind: str | None = None
         self.strength = "strong"
         self.evidence_present = True
+        self.incident_id: str | None = None
+        self.alerted_once = False
+        self.cooldown_until: datetime | None = None
+        self.thresholds = load_thresholds()
+        self.status = "idle"
 
-    def on_event(self, kind: str, *, strength: str = "strong") -> list[SafetyEffect]:
+    def on_event(self, kind: str, *, strength: str = "strong", source: str | None = None) -> list[SafetyEffect]:
         if kind not in {"possible_fall", "distress_call"}:
             return []
+        now = self.clock.now()
+        stronger = kind == "distress_call" or source == "sos_button"
+        if (
+            kind == "possible_fall"
+            and self.cooldown_until is not None
+            and now < self.cooldown_until
+            and not stronger
+        ):
+            return []
         # A fall that is still going does not start another check-in.
-        # Pain or a call for help does, even after the first incident alerted.
+        # A stronger call for help does, even after the first incident alerted.
         if kind == "possible_fall" and self.phase in {"checkin", "checkin_repeat", "alerted", "watching"}:
             return []
         if kind == "distress_call" and self.phase in {"checkin", "checkin_repeat"}:
             return []
+        if self.phase in {"idle", "watching"} or self.incident_id is None:
+            self.incident_id = self.ids("inc")
+            self.alerted_once = False
         self.phase = "checkin"
-        self.started = self.clock.now()
+        self.status = "checking"
+        self.started = now
         self.event_kind = kind
         self.strength = strength if strength in {"strong", "supporting"} else "strong"
         self.evidence_present = True
         self.watch_until = None
         self.next_checkin = None
-        return [self._checkin(louder=False, pattern="pulse1", text=CHECKIN_TEXT)]
+        effects = [self._checkin(louder=False, pattern="pulse1", text=CHECKIN_TEXT)]
+        if source == "sos_button":
+            effects.extend(self._alert(because="the person pressed SOS"))
+        return effects
 
     def on_answer(self, raw: str) -> list[SafetyEffect]:
         answer = _classify(raw)
         if self.phase == "alerted" and answer == "okay":
-            return self.stand_down()
+            return self._resolve()
         if self.phase not in {"checkin", "checkin_repeat"}:
             return []
         if answer == "okay":
-            self.phase = "watching"
-            self.watch_until = self.clock.now() + timedelta(seconds=WATCH_S)
-            return [
-                SafetyEffect(
-                    kind="cleared",
-                    text="Okay. I'll keep an eye on the room.",
-                )
-            ]
+            return self._resolve()
         if answer == "help":
             return self._alert(because="the person needs help")
         return [self._checkin(louder=False, pattern="pulse1", text=REASK_TEXT)]
@@ -114,6 +128,7 @@ class SafetyMachine:
             return [self._checkin(louder=False, pattern="pulse1")]
         if self.phase == "watching" and self.watch_until is not None and now >= self.watch_until:
             self.phase = "idle"
+            self.status = "idle"
             self.watch_until = None
         return []
 
@@ -121,6 +136,7 @@ class SafetyMachine:
         if self.phase != "alerted":
             return []
         self.phase = "idle"
+        self.status = "dismissed"
         self.next_checkin = None
         return [SafetyEffect(kind="cleared", text="Caregiver acknowledged.")]
 
@@ -128,7 +144,9 @@ class SafetyMachine:
         """The incident is over. The next fall or pain can text again."""
         if self.phase == "idle":
             return []
+        was_alerted = self.phase == "alerted"
         self.phase = "idle"
+        self.status = "resolved_ok" if was_alerted else "dismissed"
         self.started = None
         self.watch_until = None
         self.next_checkin = None
@@ -178,16 +196,27 @@ class SafetyMachine:
     def _alert(self, *, because: str) -> list[SafetyEffect]:
         person = self.profile.agreements.person_name
         caregiver = self.profile.agreements.caregiver
+        if self.alerted_once:
+            return []
         if because == "no response":
-            message = f"{person} may have fallen in the living room; no response"
+            message = f"{person} may have fallen in the living room and has not responded to check-ins."
+        elif because == "the person pressed SOS":
+            message = f"{person} pressed the help button in the living room."
         else:
             message = f"{person} needs help in the living room"
         told = f"{caregiver} has been notified."
         self.phase = "alerted"
+        self.status = "alerted"
+        self.alerted_once = True
         self.next_checkin = self.clock.now() + timedelta(seconds=FOLLOWUP_S)
         alert = self._tool_plan(
             "alert_caregiver",
-            {"severity": "high", "message": message, "include_snapshot": False},
+            {
+                "severity": "high",
+                "message": message,
+                "include_snapshot": False,
+                "incident_id": self.incident_id or self.ids("inc"),
+            },
             action_class="safety",
             intent=message,
         )
@@ -237,17 +266,33 @@ class SafetyMachine:
             delivered_via=self.profile.delivery_channels(safety=True),
             reasoning_summary=intent,
             evidence=[
-                Evidence(kind="vision", summary=self.event_kind, at=self.clock.now())
+                Evidence(
+                    kind="vision",
+                    summary="debilitated" if tool == "alert_caregiver" else (self.event_kind or "safety"),
+                    at=self.clock.now(),
+                )
             ],
         )
 
+    def _resolve(self) -> list[SafetyEffect]:
+        person = self.profile.agreements.person_name
+        told = self.alerted_once
+        self.phase = "watching"
+        self.status = "resolved_ok"
+        self.cooldown_until = self.clock.now() + timedelta(seconds=self.thresholds.checkin_cooldown_s)
+        self.watch_until = self.cooldown_until
+        text = f"Update: {person} says they're okay." if told else "Okay. I'll keep an eye on the room."
+        return [SafetyEffect(kind="cleared", text=text)]
+
 
 def _classify(raw: str) -> Literal["okay", "help", "reask"] | None:
-    text = " ".join(raw.strip().lower().replace("’", "'").split())
-    if text in _OKAY or "i'm okay" in text or "im okay" in text or "i am okay" in text or "i'm fine" in text or "im fine" in text:
+    text = " ".join(raw.strip().lower().replace("\u2019", "'").replace("'", "'").split())
+    if is_request(text) or is_okay_phrase(text) or text in _OKAY or "i'm fine" in text or "i'm okay" in text:
         return "okay"
-    if text in _HELP:
+    if is_strong_phrase(text) or text in _HELP:
         return "help"
     if text == "no":
         return "reask"
+    if len(text.split()) >= 3:
+        return "okay"
     return "reask"

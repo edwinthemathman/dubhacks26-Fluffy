@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from fluffy.brain.wellbeing import SafetyThresholds, is_request, is_strong_phrase, load_thresholds
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
 from fluffy.perception.scene import ObjectSighting, SceneState
@@ -18,13 +19,7 @@ MEMORY_WINDOW = timedelta(minutes=30)
 MAX_UTTERANCES = 10
 SNAPSHOT_TOKEN_BUDGET = 600
 
-# "help" alone is distress. "help me find my keys" is a normal request.
-_DISTRESS = (
-    re.compile(r"\bi fell\b", re.IGNORECASE),
-    re.compile(r"\bcan(?:not|'t) get up\b", re.IGNORECASE),
-    re.compile(r"\bi need help\b", re.IGNORECASE),
-    re.compile(r"^\s*(?:fluffy[, ]+)?help(?: me)?[.!?]*\s*$", re.IGNORECASE),
-)
+# Strong distress phrases only. A request such as "help me find my keys" is not one.
 
 _HANDLED: dict[str, HandledAs] = {
     "possible_fall": "safety",
@@ -228,9 +223,10 @@ class ObjectMemory:
 
 
 class WorldModel:
-    def __init__(self, clock: Clock, ids: IdFactory | None = None) -> None:
+    def __init__(self, clock: Clock, ids: IdFactory | None = None, thresholds: SafetyThresholds | None = None) -> None:
         self.clock = clock
         self.ids = ids or IdFactory()
+        self.thresholds = thresholds or load_thresholds()
         self.objects = ObjectMemory()
         self.speech_active = False
         self.latest_scene: SceneState | None = None
@@ -240,6 +236,8 @@ class WorldModel:
         self.events: list[DerivedEvent] = []
         self._held: dict[str, datetime] = {}
         self._fired: set[str] = set()
+        self._floor_since: datetime | None = None
+        self._floor_run: int = 0
 
     def observe_scene(self, scene: SceneState) -> list[DerivedEvent]:
         now = self.clock.now()
@@ -251,8 +249,8 @@ class WorldModel:
         found.extend(
             self._sustain(
                 "possible_fall",
-                _fall_active(scene),
-                10,
+                self._fall_ready(scene),
+                0,
                 {"surface": "floor"},
             )
         )
@@ -296,7 +294,9 @@ class WorldModel:
             return []
         self.utterances.append((self.clock.now(), cleaned))
         self.utterances = self.utterances[-MAX_UTTERANCES:]
-        if any(pattern.search(cleaned) for pattern in _DISTRESS):
+        if is_request(cleaned):
+            return []
+        if is_strong_phrase(cleaned):
             return [self._emit("distress_call", {"utterance": cleaned})]
         return []
 
@@ -307,6 +307,33 @@ class WorldModel:
 
     def observe_sos(self) -> list[DerivedEvent]:
         return [self._emit("distress_call", {"source": "sos_button"})]
+
+    def _fall_ready(self, scene: SceneState) -> bool:
+        """On the floor, still, and confident, across the dwell and two reads."""
+
+        person = next((item for item in scene.people if not item.on_screen), None)
+        busy = person is not None and (
+            person.motion == "purposeful"
+            or person.activity_hint in {"reaching", "picking_up", "exercising", "playing_on_floor"}
+            or person.posture in {"standing", "walking"}
+            or person.location_surface in {"sofa", "bed"}
+        )
+        qualifies = (
+            scene.confidence >= self.thresholds.scene_min_confidence
+            and _fall_active(scene)
+            and not busy
+            and (person is None or person.motion != "purposeful")
+        )
+        if not qualifies:
+            self._floor_since = None
+            self._floor_run = 0
+            return False
+        self._floor_run += 1
+        if self._floor_since is None:
+            self._floor_since = self.clock.now()
+        dwell = (self.clock.now() - self._floor_since).total_seconds()
+        enough_reads = self._floor_run >= 2 or (self._floor_run == 1 and person is not None and person.motion == "none")
+        return enough_reads and dwell >= self.thresholds.fall_dwell_s
 
     def note_plan(self, summary: str) -> None:
         now = self.clock.now()

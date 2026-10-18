@@ -144,6 +144,20 @@ def types(events: list[dict]) -> list[str]:
     return [event["type"] for event in events]
 
 
+async def see_down(loop: LiveLoop, fake: FakePerceiver, clock: FrozenClock) -> None:
+    """Two confident, still floor reads past the dwell. That is the check-in bar."""
+    fake.scene = SceneState(
+        confidence=0.95,
+        people=[PersonState(posture="lying", on_floor=True, location_surface="floor", eyes="closed", motion="none")],
+        summary="still on the floor",
+    )
+    feed_frames(loop, clock)
+    await settle(loop)
+    clock.advance(21)
+    feed_frames(loop, clock, 0.5)
+    await settle(loop)
+
+
 # ---------- buffers ----------
 
 def test_frame_buffer_stays_bounded_when_timestamps_stall():
@@ -227,11 +241,19 @@ def test_motion_then_settle_fires_one_scene_read():
 def test_a_fall_starts_the_checkin_before_the_decision_returns():
     async def run():
         loop, fake, clock, events = make()
-        fake.scene = FALLEN
+        fake.scene = SceneState(
+            confidence=0.95,
+            people=[PersonState(posture="lying", on_floor=True, location_surface="floor", eyes="closed", motion="none")],
+            summary="still on the floor",
+        )
         fake.decide_gate = asyncio.Event()  # the decision call never returns in this test
         feed_frames(loop, clock)
         await settle(loop)
-        assert {"type": "safety", "state": "checkin1"} in events
+        assert not any(event["type"] == "safety" for event in events)
+        clock.advance(21)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        assert any(event["type"] == "safety" and event.get("state") == "checkin1" for event in events)
         asks = [e for e in events if e["type"] == "ask"]
         assert asks and asks[0]["question"] == "Are you okay?"
         assert any(e["type"] == "tool.call" and e["tool"] == "flash_lights" for e in events)
@@ -392,9 +414,7 @@ def test_walking_in_runs_the_lights_on_habit_without_asking():
 def test_a_repeated_fall_is_latched():
     async def run():
         loop, fake, clock, events = make(heartbeat_s=1)
-        fake.scene = FALLEN
-        feed_frames(loop, clock)
-        await settle(loop)
+        await see_down(loop, fake, clock)
         for _ in range(4):
             clock.advance(1.5)
             feed_frames(loop, clock, 0.5)
@@ -543,9 +563,7 @@ def test_turn_end_carries_stage_timings():
 def test_every_event_is_a_known_web_event():
     async def run():
         loop, fake, clock, events = make()
-        fake.scene = FALLEN
-        feed_frames(loop, clock)
-        await settle(loop, rounds=4)
+        await see_down(loop, fake, clock)
         await loop.on_client({"type": "answer", "choice": "help", "by": "button"})
         await loop.on_client({"type": "caregiver.ack"})
         assert set(types(events)) <= EVENT_TYPES
@@ -557,12 +575,10 @@ def test_every_event_is_a_known_web_event():
 def test_a_spoken_yes_answers_the_checkin():
     async def run():
         loop, fake, clock, events = make()
-        fake.scene = FALLEN
-        feed_frames(loop, clock)
-        await settle(loop)
+        await see_down(loop, fake, clock)
         fake.answer_value = "yes"
         await loop._hear(0, 1600)
-        assert {"type": "safety", "state": "ok"} in events
+        assert any(event["type"] == "safety" and event.get("state") == "ok" for event in events)
         assert loop.safety.phase == "watching"
     asyncio.run(run())
 

@@ -532,7 +532,11 @@ class Runtime:
         await self.emit(
             incident.session_id,
             "incident.updated",
-            view.model_dump(mode="json") if view else {"incident_id": incident.incident_id, "phase": incident.phase},
+            {
+                **(view.model_dump(mode="json") if view else {"incident_id": incident.incident_id, "phase": incident.phase}),
+                "status": _incident_status(incident.phase),
+                "summary": incident.question_text or incident.phase,
+            },
         )
 
     async def apply_safety(self, commands: list[SafetyCommand]) -> None:
@@ -683,6 +687,18 @@ class Runtime:
         response = await self.http.get(f"{self.settings.home_url}/api/state", headers=self.headers())
         response.raise_for_status()
         return response.json()
+
+
+def _incident_status(phase: str) -> str:
+    if phase in {"speaking_1", "window_1", "speaking_2", "window_2", "checking", "checkin", "checkin_repeat"}:
+        return "checking"
+    if phase in {"alert_pending", "alerted"}:
+        return "alerted"
+    if phase == "resolved_ok":
+        return "resolved_ok"
+    if phase in {"cancelled", "dismissed"}:
+        return "dismissed"
+    return phase
 
 
 def _targets(args: dict) -> list[str]:

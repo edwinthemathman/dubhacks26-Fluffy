@@ -28,8 +28,9 @@ def test_checkin_then_okay_watches_for_five_minutes():
     assert machine.phase == "watching"
     assert machine.on_event("possible_fall") == []
 
-    clock.advance(5 * 60 - 1)
+    clock.advance(600 - 1)
     assert machine.tick() == []
+    assert machine.on_event("possible_fall") == []
     clock.advance(1)
     assert machine.tick() == []
     assert machine.phase == "idle"
@@ -76,7 +77,7 @@ def test_silence_repeats_then_alerts_with_the_fall_message():
     clock.advance(30)
     effects = machine.tick()
     assert effects[0].kind == "alert"
-    assert effects[0].text == "Sam may have fallen in the living room; no response"
+    assert effects[0].text == "Sam may have fallen in the living room and has not responded to check-ins."
     assert effects[0].plans[0].consent.given_by == "profile"
     assert effects[1].text == "Alex has been notified."
 
@@ -137,7 +138,11 @@ def test_okay_after_alert_stands_down():
     assert machine.phase == "alerted"
     cleared = machine.on_answer("I'm okay")
     assert cleared[0].kind == "cleared"
-    assert machine.phase == "idle"
+    assert cleared[0].text.startswith("Update:")
+    assert machine.status == "resolved_ok"
+    assert machine.on_event("possible_fall") == []
+    clock.advance(600)
+    machine.tick()
     assert machine.on_event("possible_fall")[0].kind == "checkin"
 
 

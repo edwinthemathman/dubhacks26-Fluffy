@@ -154,10 +154,10 @@ def test_trace_fallback_when_a_fall_gets_no_tool():
         clock=FrozenClock(),
     )
     steps = [entry["step"] for entry in result["trace"]]
-    assert steps == ["heard", "transcript", "scene", "cues", "decide", "fallback", "consent"]
+    assert steps == ["heard", "transcript", "scene", "cues", "decide", "fallback"]
     assert "fall" in result["trace"][3]["cues"]
     assert result["trace"][2]["thinking"] == "watched the clip start to end"
     assert result["trace"][4]["thinking"] == "I am not sure what to do"
     assert result["trace"][4]["tool_calls"] == []
-    assert result["trace"][5]["tool"] == "alert_caregiver"
-    assert result["trace"][6]["question"] == "Should I call Alex for help?"
+    assert result["trace"][5]["status"] == "checking"
+    assert "alert_caregiver" not in result["trace"][5]["summary"]

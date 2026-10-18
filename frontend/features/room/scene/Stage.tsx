@@ -35,7 +35,7 @@ export function Stage({
       <Blinds position={state.blinds.position} pending={state.pending.blinds} colors={colors} reduced={reduced} />
       <RoomLight kind="floor" light={state.lamp} pending={state.pending.lamp} colors={colors} reduced={reduced} />
       <RoomLight kind="ceiling" light={state.ceiling} pending={state.pending.ceiling} colors={colors} reduced={reduced} />
-      <Door open={state.door.open !== false} pending={undefined} colors={colors} reduced={reduced} />
+      <Door open={state.door.open === true} pending={state.pending.door} colors={colors} reduced={reduced} />
       <Speaker speaker={state.speaker} pending={state.pending.speaker} colors={colors} reduced={reduced} />
       <Phone phone={state.phone} pending={state.pending.phone} colors={colors} reduced={reduced} now={now} />
       <FlashOverlay flash={state.flash} now={now} reduced={reduced} />

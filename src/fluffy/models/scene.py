@@ -30,6 +30,9 @@ class ScenePerson(BaseModel):
     on_floor: bool
     location_surface: LocationSurface
     eyes: str | None = None
+    motion: Literal["none", "small", "purposeful"] | None = None
+    activity_hint: Literal["none", "reaching", "picking_up", "exercising", "playing_on_floor"] | None = None
+    fall_confidence: float | None = Field(default=None, ge=0, le=1)
     gesture: Gesture | None = None
     attention_target: str | None = Field(
         default=None,

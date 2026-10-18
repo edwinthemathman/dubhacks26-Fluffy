@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 
 Activity = Literal["sleeping", "arriving", "leaving", "idle", "distressed", "fallen", "unknown"]
+Motion = Literal["none", "small", "purposeful"]
+ActivityHint = Literal["none", "reaching", "picking_up", "exercising", "playing_on_floor"]
 # Sound backs up what is seen. It breaks ties between look-alike moments
 # (snoring versus speech), and pain or a thud can confirm a fall nobody names.
 SoundLabel = Literal[
@@ -78,6 +80,9 @@ class PersonState(BaseModel):
     activity: Activity = "unknown"
     on_floor: bool = False
     location_surface: Literal["floor", "sofa", "bed", "unknown"] = "unknown"
+    motion: Motion = "none"
+    activity_hint: ActivityHint = "none"
+    fall_confidence: float = 0.0
     distress_signs: list[DistressSign] = Field(default_factory=list)
     eyes: Literal["open", "closed", "unknown"] = "unknown"
     gesture: Literal["none", "pointing", "shielding_eyes", "waving", "clapping", "stop"] = "none"

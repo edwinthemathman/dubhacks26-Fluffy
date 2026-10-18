@@ -10,8 +10,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
+import logging
+
+from fluffy.brain.wellbeing import load_thresholds
 from fluffy.clock import Clock
 from fluffy.models import Plan
+
+log = logging.getLogger("fluffy.arbiter")
 
 LOW_CONFIDENCE = 0.7
 OFFER_WINDOW = timedelta(minutes=2)
@@ -42,9 +47,11 @@ class Arbiter:
 
     def review(self, plan: Plan) -> Verdict:
         if _calls_caregiver(plan):
-            if plan.consent.given_by is None:
-                return Verdict("needs_consent", "ask before calling for help")
-            return Verdict("allow", "caregiver call was accepted")
+            reason = _caregiver_block(plan)
+            if reason:
+                log.info("alert_caregiver considered/blocked: %s", reason)
+                return Verdict("considered", reason)
+            return Verdict("allow", "safety alert")
         if plan.action_class != "comfort":
             return Verdict("allow", "notify is pre-agreed")
         if plan.consent.given_by is not None:
@@ -83,3 +90,22 @@ class Arbiter:
 
 def _calls_caregiver(plan: Plan) -> bool:
     return any(action.tool == "alert_caregiver" for action in plan.actions)
+
+
+def _caregiver_block(plan: Plan) -> str | None:
+    thresholds = load_thresholds()
+    if plan.trigger.kind != "safety":
+        return "caregiver text is only sent by the safety check-in"
+    if plan.confidence < thresholds.alert_min_confidence:
+        return "caregiver text is below the alert confidence"
+    if not plan.evidence:
+        return "caregiver text is missing evidence"
+    if not any((item.summary or "") == "debilitated" for item in plan.evidence):
+        return "caregiver text requires a debilitated assessment"
+    for action in plan.actions:
+        if action.tool != "alert_caregiver":
+            continue
+        incident = str(action.args.get("incident_id") or "")
+        if not incident.startswith("inc_"):
+            return "caregiver text is missing an incident id"
+    return None

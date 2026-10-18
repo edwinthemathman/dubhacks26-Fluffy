@@ -4,7 +4,7 @@
  */
 export type Warmth = "warm" | "neutral" | "cool";
 export type PhoneChannel = "imessage" | "sms" | "whatsapp" | "other";
-export type RoomObject = "lamp" | "ceiling" | "blinds" | "speaker" | "phone";
+export type RoomObject = "lamp" | "ceiling" | "blinds" | "speaker" | "phone" | "door";
 export type PendingState = "asking" | "failed" | "pending";
 export type DeliveryState = "accepted" | "delivered" | "acknowledged" | "failed" | "unknown";
 
@@ -21,7 +21,7 @@ export type RoomState = {
   lamp: { level: number | null; warmth: Warmth | null };
   ceiling: { level: number | null; warmth: Warmth | null };
   blinds: { position: number | null };
-  /** Scenery only unless a real manifest adds door control. */
+  /** Open only when the front door's confirmed home state says so. */
   door: { open: boolean | null };
   speaker: {
     playing: boolean;

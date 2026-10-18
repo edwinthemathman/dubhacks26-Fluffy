@@ -12,6 +12,7 @@ from fluffy.demo.analyze import _user_text
 from fluffy.live.loop import DecideRequest
 from fluffy.live.server import create_app
 from fluffy.live.voice_policy import VoicePolicy
+from fluffy.perception.scene import PersonState, SceneState
 from fluffy.voice.elevenlabs import DEFAULT_MODEL, DEFAULT_VOICE_ID, ElevenLabsVoice
 from tests.inference.helpers import profiles
 from tests.live.test_live_loop import DOZING, FALLEN, feed_frames, make, settle
@@ -110,8 +111,15 @@ def test_safety_checkin_is_voiced_right_after_another_question():
     async def run():
         loop, fake, clock, events = make()
         loop.policy.note_unprompted()
-        fake.scene = FALLEN
+        fake.scene = SceneState(
+            confidence=0.95,
+            people=[PersonState(posture="lying", on_floor=True, location_surface="floor", eyes="closed", motion="none")],
+            summary="still on the floor",
+        )
         feed_frames(loop, clock)
+        await settle(loop)
+        clock.advance(21)
+        feed_frames(loop, clock, 0.5)
         await settle(loop)
         says = [event for event in events if event["type"] == "say" and event["text"] == "Are you okay?"]
         assert says and says[0]["voice"] is True

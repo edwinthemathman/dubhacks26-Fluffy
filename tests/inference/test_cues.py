@@ -171,11 +171,11 @@ def test_a_fall_only_asks_to_call_alex():
         transcript_clear=False,
         scene=scene,
     )
-    assert update.status == "asking"
+    assert update.status == "dropped"
     assert update.release is False
-    assert update.question == "Should I call Alex for help?"
+    assert "blocked" in update.reason
     assert update.plan is not None
-    assert [action.tool for action in update.plan.actions] == ["alert_caregiver"]
+    assert all(action.tool != "alert_caregiver" for action in update.plan.actions)
 
 
 def test_help_sound_asks_even_when_they_look_asleep():

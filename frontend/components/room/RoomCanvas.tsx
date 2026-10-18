@@ -1,17 +1,16 @@
 "use client";
 
 import { FluffyRoom3D } from "@/features/room/FluffyRoom3D";
-import { projectHomeToRoom } from "@/features/room/projectHomeToRoom";
-import { percentLabel } from "@/lib/fluffy/levels";
+import { actionsForRoom, projectHomeToRoom } from "@/features/room/projectHomeToRoom";
+import { FRONT_DOOR_ID, percentLabel } from "@/lib/fluffy/levels";
 import { activityTurn } from "@/lib/fluffy/reducer";
-import type { ActionModel } from "@/lib/fluffy/types";
 import { useSession } from "@/providers/FluffySessionProvider";
 
 export default function RoomCanvas() {
   const session = useSession();
   const { state, now } = session;
   const turn = activityTurn(state);
-  const actions = (turn?.actionIds ?? []).map((id) => state.actions[id]).filter((item): item is ActionModel => item != null);
+  const actions = actionsForRoom(state, now);
   const room = projectHomeToRoom({ home: state.home, actions, question: state.question, now });
   const lights = Object.values(state.home.lights);
   const blinds = Object.values(state.home.blinds);
@@ -42,6 +41,7 @@ export default function RoomCanvas() {
               label="Speaker"
               value={speakerLine(state.home.speaker.playback, state.home.speaker.confirmed, state.home.speaker.sound, state.home.speaker.volume)}
             />
+            {state.home.doors[FRONT_DOOR_ID] ? <Fact label="Door" value={doorLine(state.home.doors[FRONT_DOOR_ID].open)} /> : null}
             <Fact label="Message" value={messageLine(state.home.caregiver)} />
             {state.home.caption ? <Fact label="Caption" value={state.home.caption.text} /> : null}
             {state.incident ? <Fact label="Incident" value={`${state.incident.status}: ${state.incident.summary}`} /> : null}
@@ -68,6 +68,11 @@ function labelFor(id: string): string {
   if (id === "lamp.living_floor") return "Floor lamp";
   if (id === "light.living_ceiling") return "Ceiling light";
   return id;
+}
+
+function doorLine(open: boolean | null | undefined): string {
+  if (open == null) return "Unknown";
+  return open ? "Open" : "Closed";
 }
 
 function speakerLine(playback: string, confirmed: boolean, sound: string | null, volume: number | null): string {

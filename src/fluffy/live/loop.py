@@ -33,6 +33,7 @@ from fluffy.brain.objects import ObjectNotice, important_for, object_notices, ta
 from fluffy.brain.habits import HabitBook, habit_note, habit_why
 from fluffy.brain.help import HelpLadder, HelpSignal
 from fluffy.brain.safety import CHECKIN_TEXT, PAIN_TEXT_S, SafetyEffect, SafetyMachine
+from fluffy.brain.wellbeing import WellbeingInput, assess, is_request, load_thresholds
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
 from fluffy.integrations.spotify import pause_playback, play_clap_song, set_volume
@@ -300,6 +301,7 @@ class LiveLoop:
         self.safety = SafetyMachine(self.clock, self.profile)
         self.policy = VoicePolicy(self.clock)
         self.scene: SceneState | None = None
+        self.scene_log: list[tuple] = []
         self.active_cues: set[str] = set()
         self.latched: dict[str, float] = {}
         self.calls: deque[float] = deque()
@@ -691,6 +693,9 @@ class LiveLoop:
         self.scene = scene
         self._notice_scene_gesture(scene)
         self._emit_perception("scene")
+        self.scene_log.append((self.clock.now(), scene))
+        self.scene_log = self.scene_log[-8:]
+        self._consider_safety(scene)
         presence = self.presence.observe(scene, self.now(), self.profile.agreements.person_name)
         self.room_change = presence.room_change
         cues = self._scene_cues(scene, presence.cues)
@@ -1001,6 +1006,31 @@ class LiveLoop:
             return set(cues) - {"glare"}
         return cues
 
+    def _consider_safety(self, scene: SceneState) -> None:
+        """Check-in only when the wellbeing score clears the bar. A request cancels one."""
+
+        said = (scene.said or "").strip()
+        result = assess(
+            WellbeingInput(
+                transcript=said,
+                scenes=list(self.scene_log),
+                now=self.clock.now(),
+                last_speech_at=self.clock.now() if said else None,
+                thresholds=load_thresholds(),
+            )
+        )
+        if result.status == "request" and self.safety.phase in {"checkin", "checkin_repeat"}:
+            self._safety_effects(self.safety.on_answer(said))
+            return
+        upright = any(person.posture in {"standing", "walking"} for person in scene.people)
+        if upright and self.safety.phase in {"checkin", "checkin_repeat"}:
+            self._safety_effects(self.safety.on_answer("I'm okay"))
+            return
+        if result.status == "possibly_down" and self.safety.phase in {"idle", "watching"}:
+            self._safety_effects(self.safety.on_event("possible_fall"), trigger="fall seen")
+        elif result.status == "debilitated" and self.safety.phase in {"idle", "watching"}:
+            self._safety_effects(self.safety.on_event("distress_call", source="sos_button"), trigger="sos")
+
     def _on_cues(self, cues: set[str], *, trigger: str, wav: bytes | None = None) -> None:
         now = self.now()
         # The first clap starts the song. It is never started again.
@@ -1032,7 +1062,6 @@ class LiveLoop:
                 else self.help.note_floor(now)
             )
             self._start_help(outcome, trigger="fall seen")
-        if "fall" in fresh:
             kind = "safety"
         elif fresh & NOTIFY_SOUNDS:
             kind = "sound"
@@ -1654,23 +1683,19 @@ class LiveLoop:
         # Falls belong to the safety check-in ("Are you okay?", then the caregiver),
         # not to a second consent question. A model call to alert_caregiver starts
         # the check-in if it is not already running.
-        wants_help = plan is not None and any(a.tool == "alert_caregiver" for a in plan.actions)
-        fall_now = "fall" in request.cues or "fall" in derive(self.scene)
-        if wants_help or fall_now:
-            if wants_help:
-                why = reasons.get("alert_caregiver") or "looks like a fall"
-                self.emit({"type": "think", "turn_id": turn_id, "note": f"model: alert caregiver ({why})"[:48]})
-            if self.safety.phase in {"idle", "watching"} and wants_help:
-                confidence = min((call.confidence for call in result.device if call.name == "alert_caregiver"), default=0)
-                if confidence >= 0.7:
-                    outcome = self.help.observe(HelpSignal("alert_caregiver", "supporting", "model", self.now()))
-                    if outcome == "checkin":
-                        self._start_help(outcome, trigger="model saw a fall")
-                        self._end(turn_id, started, "asked", note="check-in started")
-                        return
-                self._end(turn_id, started, "nothing", note="help needs more than the model's call")
-            else:
-                self._end(turn_id, started, "nothing", note="safety check-in handles this")
+        if plan is not None and any(action.tool == "alert_caregiver" for action in plan.actions):
+            log.info("alert_caregiver considered/blocked from the decision call")
+            why = reasons.get("alert_caregiver") or "looks like a fall"
+            self.emit({"type": "think", "turn_id": turn_id, "note": f"considered/blocked: caregiver text ({why})"[:48]})
+            confidence = min((call.confidence for call in result.device if call.name == "alert_caregiver"), default=0)
+            if confidence >= 0.7 and self.safety.phase in {"idle", "watching"}:
+                outcome = self.help.observe(HelpSignal("alert_caregiver", "supporting", "model", self.now()))
+                if outcome == "checkin":
+                    self._start_help(outcome, trigger="model saw a fall")
+            kept = [action for action in plan.actions if action.tool != "alert_caregiver"]
+            plan = plan.model_copy(update={"actions": kept}) if kept else None
+        if "fall" in request.cues or "fall" in derive(self.scene):
+            self._end(turn_id, started, "nothing", note="safety check-in handles this")
             return
         if plan is None and applicable and "fall" not in request.cues:
             habit = applicable[0]
@@ -1865,6 +1890,11 @@ class LiveLoop:
 
     async def _answer_text(self, text: str, *, by: str) -> bool:
         """Typed text answers an open question, or becomes the next instruction."""
+        if self.safety.phase in {"checkin", "checkin_repeat", "alerted"}:
+            self._safety_effects(self.safety.on_answer(text))
+            if self.safety.phase in {"watching", "idle"} and is_request(text):
+                return False
+            return True
         if self._open_question() is None:
             return False
         words = text.lower().strip(" .!?")
@@ -1872,7 +1902,7 @@ class LiveLoop:
             question = self._replace_open_question(by=by, said=text)
             self._follow_up(text, question, None)
             return True
-        if words in {"i'm okay", "im okay", "i am okay", "i'm fine", "im fine", "no, i'm fine", "no i'm fine"} or "i'm fine" in words or "i'm okay" in words:
+        if words in {"i'm okay", "im okay", "i am okay", "i'm fine", "im fine", "no, i'm fine", "no i'm fine"} or words.startswith(("i'm okay", "im okay", "i am okay", "i'm fine", "no, i'm fine", "no i'm fine")):
             await self._answer("okay", by=by)
             return True
         if self.open_instinct:
@@ -1976,7 +2006,7 @@ class LiveLoop:
                 self.emit({"type": "turn.start", "turn_id": self.safety_turn, "kind": "safety", "trigger": trigger})
             turn = OpenTurn(self.safety_turn)
             if effect.kind == "checkin":
-                self.emit({"type": "safety", "state": SAFETY_UI.get(self.safety.phase, "checkin1")})
+                self.emit({"type": "safety", "state": SAFETY_UI.get(self.safety.phase, "checkin1"), "status": "checking", "summary": effect.text})
                 self.emit({"type": "ask", "turn_id": turn.turn_id, "question_id": turn.turn_id, "question": effect.text, "choices": ["I'm okay", "Need help"]})
                 if trigger == "pain":
                     self._checkin_text_sent = False
@@ -1993,7 +2023,7 @@ class LiveLoop:
                     self._tool_call(turn, action, why)
                 self._run_plan(plan, turn)
             if effect.kind == "alert":
-                self.emit({"type": "safety", "state": "alerted"})
+                self.emit({"type": "safety", "state": "alerted", "status": "alerted", "summary": effect.text})
             elif effect.kind in {"notify_person"} and not effect.plans:
                 self._say(turn.turn_id, effect.text, voice=True)
             elif effect.kind == "cleared":
@@ -2002,7 +2032,7 @@ class LiveLoop:
                 self._pain_text_at = None
                 self._say(turn.turn_id, effect.text, voice=True)
                 self.emit({"type": "turn.end", "turn_id": turn.turn_id, "ms": 0, "outcome": "nothing"})
-                self.emit({"type": "safety", "state": "ok"})
+                self.emit({"type": "safety", "state": "ok", "status": self.safety.status, "summary": effect.text})
                 self.safety_turn = None
 
     def on_photon_reply(self, sender: str, text: str) -> None:

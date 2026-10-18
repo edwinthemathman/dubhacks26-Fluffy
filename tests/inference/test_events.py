@@ -8,12 +8,15 @@ def _person(**kwargs) -> PersonState:
     return PersonState(**kwargs)
 
 
-def test_fall_fires_after_ten_seconds_and_only_once():
+def test_fall_fires_after_the_dwell_and_only_once():
     clock = FrozenClock()
     world = WorldModel(clock)
-    scene = SceneState(people=[_person(on_floor=True, location_surface="floor")])
+    scene = SceneState(
+        confidence=0.9,
+        people=[_person(on_floor=True, location_surface="floor", posture="lying", eyes="closed", motion="none")],
+    )
     assert world.observe_scene(scene) == []
-    clock.advance(9)
+    clock.advance(19)
     assert world.observe_scene(scene) == []
     clock.advance(1)
     events = world.observe_scene(scene)
@@ -39,7 +42,8 @@ def test_distress_phrases_and_the_sos_button():
     world = WorldModel(clock)
     assert world.observe_transcript("I fell")[0].kind == "distress_call"
     assert world.observe_transcript("I can't get up")[0].handled_as == "safety"
-    assert world.observe_transcript("help")[0].kind == "distress_call"
+    assert world.observe_transcript("help") == []
+    assert world.observe_transcript("Fluffy, can you help me get a bottle of water?") == []
     assert world.observe_transcript("Fluffy, help me find my keys") == []
     assert world.observe_sos()[0].detail["source"] == "sos_button"
 

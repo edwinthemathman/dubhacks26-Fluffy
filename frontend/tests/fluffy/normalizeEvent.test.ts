@@ -115,7 +115,10 @@ describe("normalizeEvent", () => {
       type: "snapshot",
       patch: {
         caregiver: { recipient: "Alex", message: "Sam needs help", delivery: "delivered", animateUntil: NOW + 4000 },
-        doors: { front_door: "open", bedroom_door: "closed" },
+        doors: [
+          { id: "front_door", open: true },
+          { id: "bedroom_door", open: false },
+        ],
         flash: { startedAt: NOW, endedAt: NOW + 3000, pulses: 2 },
       },
     });

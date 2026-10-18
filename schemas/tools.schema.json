@@ -365,6 +365,156 @@
         ],
         "type": "object"
       }
+    },
+    {
+      "name": "open_door",
+      "action_class": "comfort",
+      "effect_kind": "simulated_state",
+      "summary": "Open the front or bedroom door.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "door": {
+            "enum": [
+              "front_door",
+              "bedroom_door"
+            ],
+            "title": "Door",
+            "type": "string"
+          }
+        },
+        "required": [
+          "door"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "close_door",
+      "action_class": "comfort",
+      "effect_kind": "simulated_state",
+      "summary": "Close the front or bedroom door.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "door": {
+            "enum": [
+              "front_door",
+              "bedroom_door"
+            ],
+            "title": "Door",
+            "type": "string"
+          }
+        },
+        "required": [
+          "door"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "play_music",
+      "action_class": "comfort",
+      "effect_kind": "spotify",
+      "summary": "Play a Spotify track URI. A title without a URI does not play.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volume"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "stop_music",
+      "action_class": "comfort",
+      "effect_kind": "spotify",
+      "summary": "Pause Spotify and stop local sound.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "send_text",
+      "action_class": "comfort",
+      "effect_kind": "photon",
+      "summary": "Text a saved contact. Fails closed unless Photon can deliver it.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "to": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "To",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "call_person",
+      "action_class": "comfort",
+      "effect_kind": "simulated_state",
+      "summary": "Show a demo call caption. Does not place a call.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "to": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "type": "object"
+      }
     }
   ]
 }

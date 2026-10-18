@@ -58,29 +58,41 @@ export type CaregiverModel = {
   animateUntil: number;
 };
 
+export type DoorReading = {
+  id: string;
+  open: boolean | null;
+};
+
+export type CallReading = {
+  to: string;
+  until: number;
+};
+
 export type HomeModel = {
   known: boolean;
   revision: number | null;
   lights: Record<string, LightReading>;
   blinds: Record<string, BlindReading>;
+  doors: Record<string, DoorReading>;
   speaker: SpeakerModel;
   flash: FlashModel | null;
   caption: { text: string; until: number | null } | null;
   caregiver: CaregiverModel | null;
   caregiverName: string | null;
-  doors: Record<string, "open" | "closed">;
+  call: CallReading | null;
 };
 
 export type HomePatch = {
   revision?: number | null;
   lights?: LightReading[];
   blinds?: BlindReading[];
+  doors?: DoorReading[];
   speaker?: Partial<SpeakerModel>;
+  call?: CallReading | null;
   flash?: FlashModel | null;
   caption?: { text: string; until: number | null } | null;
   caregiver?: CaregiverModel | null;
   caregiverName?: string | null;
-  doors?: Record<string, "open" | "closed">;
   /** When true, omitted devices stay unknown instead of keeping stale values. */
   replace?: boolean;
 };

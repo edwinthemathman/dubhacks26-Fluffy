@@ -20,6 +20,7 @@ from fluffy.models.contracts import (
     PlanSubmission,
     UiEvent,
 )
+from fluffy.models.scene import scene_schema
 from fluffy.tools.registry import build_registry
 
 
@@ -36,6 +37,7 @@ def export_schemas(directory: Path) -> None:
         "output_message.schema.json": OutputMessage.model_json_schema(),
         "ui_event.schema.json": UiEvent.model_json_schema(),
         "tools.schema.json": registry.manifest({name: True for name in registry.names()}),
+        "scene.schema.json": scene_schema(),
     }
     for name, schema in schemas.items():
         (directory / name).write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")

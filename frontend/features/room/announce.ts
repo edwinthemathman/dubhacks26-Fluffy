@@ -36,6 +36,21 @@ export function describeChange(prev: RoomState, next: RoomState): string | null 
   const prevAsk = prev.ask?.question ?? "";
   const nextAsk = next.ask?.question ?? "";
   if (prevAsk !== nextAsk && nextAsk) lines.push(nextAsk);
+  const names: Record<string, string> = {
+    lamp: "Floor lamp",
+    ceiling: "Ceiling light",
+    blinds: "Blinds",
+    speaker: "Speaker",
+    phone: "Phone",
+    door: "Door",
+  };
+  for (const [key, label] of Object.entries(names)) {
+    const before = prev.pending[key as keyof RoomState["pending"]];
+    const after = next.pending[key as keyof RoomState["pending"]];
+    if (before === after) continue;
+    if (after === "pending" || after === "asking") lines.push(`${label} is waiting for confirmation`);
+    if (after === "failed") lines.push(`${label} was not confirmed`);
+  }
   return lines.length ? lines.join(". ") : null;
 }
 
