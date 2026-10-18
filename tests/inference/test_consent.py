@@ -16,7 +16,7 @@ def test_inferred_comfort_is_asked_and_not_released():
     update = manager.consider(dim_plan(clock), profiles()["blind"], transcript_clear=True)
     assert update.release is False
     assert update.status == "asking"
-    assert update.question == "Dim the floor lamp?"
+    assert update.question == "Do you want me to dim the lights?"
     assert update.plan is not None
     assert update.plan.consent.given_by is None
 
@@ -141,7 +141,7 @@ def test_cognitive_profile_repeats_once_then_declines():
         profiles()["speech_cognitive"],
         transcript_clear=True,
     )
-    assert asked.question == "Dim the floor lamp?"
+    assert asked.question == "Do you want me to dim the lights?"
     clock.advance(20)
     repeated = manager.tick()
     assert repeated is not None
@@ -162,7 +162,7 @@ def test_low_confidence_inferred_offer_is_asked():
     )
     assert update.status == "asking"
     assert update.release is False
-    assert update.question == "Dim the floor lamp?"
+    assert update.question == "Do you want me to dim the lights?"
     assert manager.open is not None
 
 

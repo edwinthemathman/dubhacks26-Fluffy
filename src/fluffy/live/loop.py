@@ -21,7 +21,7 @@ from typing import Any, Callable, Protocol
 
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
 from fluffy.brain.cues import NOTIFY_SOUNDS, derive
-from fluffy.brain.decide import _plan_from_devices
+from fluffy.brain.decide import _plan_from_devices, complete_paired_request
 from fluffy.brain.safety import CHECKIN_TEXT, SafetyEffect, SafetyMachine
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
@@ -537,6 +537,7 @@ class LiveLoop:
             clock=self.clock,
             ids=self.ids,
         )
+        plan = complete_paired_request(plan, request.utterance or "")
         reasons = {call.name: call.reason for call in result.device}
         # Falls belong to the safety check-in ("Are you okay?", then the caregiver),
         # not to a second consent question. A model call to alert_caregiver starts

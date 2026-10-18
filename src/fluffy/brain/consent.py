@@ -292,12 +292,64 @@ def _apply_preagreed(plan: Plan, profile: Profile) -> Plan:
 
 
 def _question_for(plan: Plan) -> str:
-    intent = plan.intent.strip()
-    if intent.endswith("?"):
-        return intent
-    if intent:
-        return f"{intent}?"
-    return "Should I do that?"
+    phrases = []
+    for action in sorted(plan.actions, key=lambda item: _ACTION_ORDER.get(item.tool, 50)):
+        phrase = _phrase_action(action)
+        if phrase and phrase not in phrases:
+            phrases.append(phrase)
+    if not phrases:
+        return "Should I do that?"
+    if len(phrases) == 1:
+        return f"Do you want me to {phrases[0]}?"
+    if len(phrases) == 2:
+        return f"Do you want me to {phrases[0]} and {phrases[1]}?"
+    head = ", ".join(phrases[:-1])
+    return f"Do you want me to {head}, and {phrases[-1]}?"
+
+
+_ACTION_ORDER = {
+    "dim_lights": 0,
+    "set_light_warmth": 1,
+    "set_blinds": 2,
+    "play_sound": 3,
+    "stop_sound": 4,
+    "flash_lights": 5,
+    "show_caption": 6,
+    "announce": 7,
+}
+
+
+def _phrase_action(action) -> str | None:
+    tool = action.tool
+    args = action.args
+    if tool == "dim_lights":
+        level = args.get("luminosity")
+        if isinstance(level, (int, float)) and level >= 60:
+            return "turn the lights on"
+        if isinstance(level, (int, float)) and level == 0:
+            return "turn the lights off"
+        return "dim the lights"
+    if tool == "set_light_warmth":
+        return f"make the lights {args.get('warmth', 'warm')}"
+    if tool == "set_blinds":
+        position = args.get("position", 0)
+        if isinstance(position, (int, float)) and position >= 50:
+            return "open the blinds"
+        return "close the blinds"
+    if tool == "play_sound":
+        sound = str(args.get("sound", "music")).replace("_", " ")
+        if sound == "music":
+            return "put on music"
+        return f"play {sound}"
+    if tool == "stop_sound":
+        return "stop the sound"
+    if tool == "flash_lights":
+        return "flash the lights"
+    if tool == "show_caption":
+        return "show a caption"
+    if tool == "announce":
+        return "say that out loud"
+    return None
 
 
 def _silence_limit(question: OpenQuestion) -> float:

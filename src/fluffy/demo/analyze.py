@@ -15,7 +15,13 @@ from perceptron import Client, SDKError, pydantic_format, video
 
 from fluffy.brain.consent import ConsentManager
 from fluffy.brain.cues import build_help_plan, derive
-from fluffy.brain.decide import _asked, _plan_from_devices, _split, system_prompt
+from fluffy.brain.decide import (
+    _asked,
+    _plan_from_devices,
+    _split,
+    complete_paired_request,
+    system_prompt,
+)
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
 from fluffy.models import Plan, Trigger
@@ -194,6 +200,7 @@ def _analyze_uploaded(
         clock=clock,
         ids=IdFactory(),
     )
+    plan = complete_paired_request(plan, f"{transcript}\n{utterance}")
     if plan is None and "fall" in cues:
         plan = build_help_plan(clock, profile)
         trace.append(
@@ -508,7 +515,8 @@ def _user_text(
             f"- Cues flagged so far: {flagged}",
             f"- Transcript: {words}",
             "The transcript is a decision. If it asks for several things, call every matching tool "
-            "in this same turn. Play music and dim the lights means play_sound sound=music and dim_lights together. "
+            "in this same turn. It's getting late and they want music means play_sound sound=music "
+            "and dim_lights together. "
             "If it says they fell, can't get up, or need help, call alert_caregiver and nothing else. "
             "'Help me find my keys' is a request to find keys, not a fall.",
             f"- Typed: {said}",

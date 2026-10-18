@@ -159,8 +159,9 @@ def system_prompt(profile: Profile) -> str:
             "- The transcript is a decision, not a hint. Call every tool it asks for, in the same turn: "
             "dim or turn a light on, warmth, blinds, a sound, or finding something they named.",
             "- One request can need several tools. Call all of them together. "
-            "Play music and dim the lights is play_sound with sound=music and dim_lights in the same turn. "
-            "Do not stop after the first part. A fall is the exception: alert_caregiver and nothing else.",
+            "It's getting late and they want music: play_sound with sound=music and dim_lights "
+            "in the same turn. Do not stop after the first part. "
+            "A fall is the exception: alert_caregiver and nothing else.",
             "- If you can see something may be wanted but you're unsure what, call ask_user "
             "with one short, friendly question instead of guessing or doing nothing.",
             "- Nothing above, or nothing changed: call no tools and reply with an empty message.",
@@ -254,7 +255,7 @@ def _plan_from_devices(
     confidence = min(call.confidence for call in device)
     reasons = "; ".join(call.reason for call in device if call.reason)
     intent = reply.strip() or reasons or "Proposed home change"
-    return build_plan(
+    plan = build_plan(
         clock=clock,
         ids=ids,
         trigger=trigger,
@@ -268,6 +269,63 @@ def _plan_from_devices(
         reasoning_summary=reasons or intent,
         evidence=[],
         snapshot_id=snapshot_id,
+    )
+    return complete_paired_request(plan, f"{reply} {reasons}")
+
+
+def complete_paired_request(plan: Plan | None, text: str) -> Plan | None:
+    """It's getting late and they want music: the plan keeps both actions.
+
+    The question is built from the actions, so a one-tool plan would ask
+    about music only. Add the missing half before that question is written.
+    """
+    if plan is None or any(action.tool == "alert_caregiver" for action in plan.actions):
+        return plan
+    if not _mentions_music(text) or not _mentions_dim(text):
+        return plan
+    actions = list(plan.actions)
+    if not any(action.tool == "play_sound" for action in actions):
+        actions.append(
+            Action(
+                action_id="act_music",
+                tool="play_sound",
+                args={"sound": "music", "room": "living_room", "volume": 40},
+            )
+        )
+    if not any(action.tool == "dim_lights" for action in actions):
+        actions.append(
+            Action(
+                action_id="act_dim",
+                tool="dim_lights",
+                args={"room": "living_room", "luminosity": 25, "light": "lamp.living_floor"},
+            )
+        )
+    if len(actions) == len(plan.actions):
+        return plan
+    return plan.model_copy(update={"actions": actions, "action_class": "comfort"})
+
+
+def _mentions_music(text: str) -> bool:
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in ("music", "a song", "some songs"))
+
+
+def _mentions_dim(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "getting late",
+            "it's late",
+            "it is late",
+            "winding down",
+            "going to sleep",
+            "going to bed",
+            "bedtime",
+            "dim the light",
+            "dim the lights",
+            "too bright",
+        )
     )
 
 

@@ -174,6 +174,38 @@ def test_music_and_dim_lights_are_one_plan():
     assert result.plan.actions[1].args["luminosity"] == 25
 
 
+def test_late_and_music_asks_for_both():
+    from fluffy.brain.decide import _plan_from_devices
+    from fluffy.ids import IdFactory
+
+    clock = FrozenClock()
+    plan = _plan_from_devices(
+        [
+            parse_call(
+                "play_sound",
+                _args(
+                    sound="music",
+                    room="living_room",
+                    volume=40,
+                    confidence=0.9,
+                    reason="person says it's getting late and asks for music",
+                ),
+            )
+        ],
+        profile=profiles()["blind"],
+        trigger=Trigger(kind="inferred", room="living_room"),
+        snapshot_id="clip",
+        reply="",
+        clock=clock,
+        ids=IdFactory(),
+    )
+    assert plan is not None
+    assert [action.tool for action in plan.actions] == ["play_sound", "dim_lights"]
+    update = ConsentManager(clock).consider(plan, profiles()["blind"], transcript_clear=False)
+    assert update.question == "Do you want me to dim the lights and put on music?"
+    assert update.release is False
+
+
 def test_catalog_rejects_malformed_json():
     try:
         parse_call("dim_lights", "{")
