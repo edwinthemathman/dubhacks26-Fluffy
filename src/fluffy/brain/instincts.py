@@ -513,9 +513,11 @@ def _holding_drink(person: PersonState) -> bool:
 
 
 def _same(left: str, right: str) -> bool:
-    a = " ".join(left.lower().split())
-    b = " ".join(right.lower().split())
-    return bool(a) and bool(b) and (a == b or a in b or b in a)
+    from fluffy.world.model import _object_key
+
+    a = _object_key(left)
+    b = _object_key(right)
+    return bool(a) and a == b
 
 
 def _bare(surface: str) -> str:

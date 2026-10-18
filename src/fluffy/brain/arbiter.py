@@ -49,6 +49,8 @@ class Arbiter:
             return Verdict("allow", "notify is pre-agreed")
         if plan.consent.given_by is not None:
             return Verdict("allow", "consent already given")
+        if plan.confidence < 0.4:
+            return Verdict("drop", "confidence below 0.4, so this stays a note")
 
         inferred = plan.trigger.kind == "inferred"
         if self._declined_recently(plan):

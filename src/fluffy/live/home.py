@@ -63,7 +63,7 @@ class HomeState:
                 return None
             s["door"][door] = "open" if tool == "open_door" else "closed"
             return {"type": "state", "door": dict(s["door"])}
-        if tool == "play_music":
+        if tool in {"play_music", "spotify_play"}:
             label = None
             if result.get("track"):
                 artist = result.get("artist") or ""
@@ -74,7 +74,7 @@ class HomeState:
                 "track": label,
             }
             return {"type": "state", "speaker": dict(s["speaker"])}
-        if tool == "stop_music":
+        if tool in {"stop_music", "spotify_pause"}:
             s["speaker"] = {"sound": None, "volume": 0, "track": None}
             return {"type": "state", "speaker": dict(s["speaker"])}
         if tool in {"send_text", "alert_caregiver"}:

@@ -5,7 +5,6 @@ export default function HomeOutcome({
   actions,
   recorded,
   recordedRows,
-  spoken,
   question,
   answering,
   onAnswer,
@@ -16,7 +15,6 @@ export default function HomeOutcome({
   actions: ActionModel[];
   recorded?: boolean;
   recordedRows?: { label: string; from: string; to: string }[];
-  spoken?: string | null;
   question: QuestionModel | null;
   answering: boolean;
   onAnswer: (choice: string) => void;
@@ -42,12 +40,6 @@ export default function HomeOutcome({
               </li>
             ))}
       </ul>
-      {spoken ? (
-        <div className="rounded-2xl border border-neutral-200 px-4 py-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Fluffy said</p>
-          <p className="mt-1 text-[15px] leading-relaxed">{spoken}</p>
-        </div>
-      ) : null}
       {question && !recorded ? (
         <div className="rounded-2xl border border-neutral-200 px-4 py-3">
           <p className="text-[15px] leading-relaxed">{question.text}</p>

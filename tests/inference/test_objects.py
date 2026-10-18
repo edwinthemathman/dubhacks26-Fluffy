@@ -142,6 +142,8 @@ def test_retagging_keeps_a_missed_object_and_falls_back_to_home():
     assert recall.location_desc == "on the side table"
 
     memory.note_live([], clock.now())
+    assert not memory.recall("wallet", clock.now()).unconfirmed
+    memory.note_live([], clock.now())
     missed = memory.recall("wallet", clock.now())
     assert missed.unconfirmed
     assert missed.location_desc == "on the side table"

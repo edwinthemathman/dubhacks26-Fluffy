@@ -275,7 +275,7 @@ def _match(wanted: str, tags: list[Tag]) -> Tag | None:
         return None
     for tag in tags:
         stored = _object_key(tag.name)
-        if key == stored or key in stored or stored in key:
+        if key == stored:
             return tag
     return None
 

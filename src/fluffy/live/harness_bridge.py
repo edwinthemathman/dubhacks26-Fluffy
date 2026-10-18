@@ -105,6 +105,7 @@ class HarnessPerception:
             loop.call_soon_threadsafe(self._queue.put_nowait, event)
 
         self.loop.emit = emit
+        self.loop.want_scan = True
         self._consumer = asyncio.create_task(self._consume())
         self._runner = asyncio.create_task(self.loop.run())
 

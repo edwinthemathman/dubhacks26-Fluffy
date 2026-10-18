@@ -198,7 +198,8 @@ def build_help_plan(clock: Clock, profile: Profile) -> Plan:
 
 def _looks_hurt(person, sounds: set[str]) -> bool:
     """A fall or injury, from the picture first. Words are not required."""
-    off_furniture = person.location_surface not in {"sofa", "bed"}
+    # An unknown surface is not evidence that they left the sofa or the bed.
+    off_furniture = person.location_surface == "floor"
     if person.fell or person.activity in {"distressed", "fallen"}:
         return True
     if person.on_floor and off_furniture:
@@ -213,20 +214,15 @@ def _looks_hurt(person, sounds: set[str]) -> bool:
 
 
 def _thud_out_of_sight(scene: SceneState, sounds: set[str]) -> bool:
-    """A thud nobody can be seen to be fine after, e.g. a fall at the frame edge.
+    """A thud counts only with a person still in view who is not clearly fine.
 
-    The app asks before calling anyone, so a false alarm only costs a question.
+    Impact alone, or a thud with nobody in the picture, is a weak hint.
     """
-    if "impact" not in sounds:
+    if "impact" not in sounds or not scene.people:
         return False
-    if "pain" in sounds:
-        return True
-    if not scene.people:
-        return True
-    return all(
-        person.posture == "unknown" or person.activity == "leaving"
-        for person in scene.people
-    )
+    if "pain" not in sounds:
+        return False
+    return any(person.activity == "leaving" or person.posture == "unknown" for person in scene.people)
 
 
 def _asleep(scene: SceneState, sounds: set[str]) -> bool:

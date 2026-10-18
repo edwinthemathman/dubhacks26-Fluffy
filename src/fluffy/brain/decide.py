@@ -136,7 +136,8 @@ def system_prompt(profile: Profile) -> str:
             "The picture decides physical facts: whether they fell, where they are, and whether the room is dark.",
             "2. Then listen. Sound confirms what you saw or settles a tie: snoring means asleep, "
             "talking means awake, a groan or a thud backs up a fall.",
-            "3. The transcript decides what they want. If it asks for something, call that tool now. "
+            "3. The words say what they want. The picture says whether it applies and who said it. "
+            "If they disagree on safety, trust the picture. If the words ask for something that fits, call that tool. "
             "If it says they fell, can't get up, or need help, call alert_caregiver. "
             "If it names an object, that object is what they are after. "
             "Words are not required: people who are hurt or unable to speak clearly often never say the obvious word.",
@@ -147,17 +148,15 @@ def system_prompt(profile: Profile) -> str:
             "- Someone falls, ends up on the floor, stays down, struggles to get up, or looks hurt "
             "(grimacing, holding a body part, groaning, crying out): call alert_caregiver. "
             "Do this even if they never say help. Call nothing else in that turn.",
-            "- A thud or crash with nobody clearly fine afterwards, someone going down at the "
-            "edge of the frame, or someone vanishing from view right after a thud: this is a "
-            "possible fall. Call alert_caregiver. The app asks before calling anyone, so a false "
-            "alarm only costs a question.",
+            "- Call alert_caregiver only when you see or hear the help signs listed. "
+            "A missed emergency and a false alarm both matter.",
             "- Dozing off, eyes closing, lying back to rest: dim_lights luminosity 10-30, "
             "and set_light_warmth warm.",
             "- A hand covering their eyes against a bright lamp, held there: dim_lights "
             "luminosity 30-40 on that light. A squint, glasses glare, or bright eyes is not enough.",
             "- Room dark, or someone arriving in the dark: dim_lights luminosity 70-100.",
             "- Doorbell, knock, or alarm: flash_lights and show_caption.",
-            "- The transcript is a decision, not a hint. Call every tool it asks for, in the same turn: "
+            "- When the words and the picture agree, call every tool they ask for, in the same turn: "
             "dim or turn a light on, warmth, blinds, a sound, or finding something they named.",
             "- One request can need several tools. Call all of them together. "
             "It's getting late and they want music: play_sound with sound=music and dim_lights "
@@ -194,7 +193,7 @@ def system_prompt(profile: Profile) -> str:
             "A tool call is only a proposal. The app asks the person before anything changes, "
             f'and asks "Should I call {caregiver} for help?" before any caregiver call. '
             "So never hold back a fitting tool call to be polite or to wait for permission. "
-            "Skipping a needed call is the worst mistake.",
+            "Call alert_caregiver only for the help signs above.",
             requests,
             "Habits are things the person asked for in advance. When one applies, propose its action "
             "with high confidence unless you can see a reason not to.",

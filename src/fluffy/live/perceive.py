@@ -104,7 +104,7 @@ async def read_scene(
                 {
                     "role": "user",
                     "content": [
-                        *window.media(with_audio=False),
+                        *window.media(with_audio=window.wav is not None),
                         {
                             "type": "text",
                             "text": (
@@ -117,7 +117,7 @@ async def read_scene(
             ],
             response_format=pydantic_format(SceneState, strict=False),
             reasoning_effort=effort,
-            max_completion_tokens=1024,
+            max_completion_tokens=2048,
             timeout=LIVE_TIMEOUT_S,
         )
     except SDKError as exc:
@@ -349,11 +349,13 @@ async def decide(
     """One decision call. Device tools in that response are the whole plan."""
     del memory, now
     started = time.perf_counter()
-    picture = Window(frames=list(window.frames), wav=None, seconds=window.seconds, ended_at=window.ended_at)
+    mode = evidence_mode or "video"
+    picture = window
+    if mode == "video_plus_transcript":
+        picture = Window(frames=list(window.frames), wav=None, seconds=window.seconds, ended_at=window.ended_at)
     transcript = scene.said.strip() if scene is not None and scene.said.strip() else ""
     if not transcript and utterance.strip():
         transcript = utterance.strip()
-    mode = evidence_mode or "video"
     preface = ""
     if mode == "video_plus_transcript":
         preface = (
@@ -368,7 +370,7 @@ async def decide(
     )
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},
-        {"role": "user", "content": [*picture.media(with_audio=False), {"type": "text", "text": user_text}]},
+        {"role": "user", "content": [*picture.media(with_audio=picture.wav is not None), {"type": "text", "text": user_text}]},
     ]
     result = await _once(client, messages, perceptron_tools(), effort, max_tokens)
     result.ms = _ms(started)

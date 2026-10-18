@@ -75,6 +75,8 @@ class Tag:
     unconfirmed: bool = False
     side: str = "unclear"
     on_head: bool = False
+    misses: int = 0
+    sightings: int = 1
 
 
 class ContextSnapshot(BaseModel):
@@ -92,10 +94,12 @@ class ObjectMemory:
 
     def note_scan(self, sightings: list[ObjectSighting], at: datetime) -> None:
         """A room scan sets the usual spot. The first time, that is also last seen."""
+        seen: set[str] = set()
         for item in sightings:
             key = _object_key(item.name)
             if not key:
                 continue
+            seen.add(key)
             place = item.location_desc.strip() or "in the room"
             tag = self._items.get(key)
             if tag is None:
@@ -122,6 +126,9 @@ class ObjectMemory:
                 tag.last_seen_at = at
                 tag.name = item.name.strip() or tag.name
                 tag.unconfirmed = False
+                tag.misses = 0
+        for key in [key for key in self._items if key not in seen]:
+            del self._items[key]
 
     def note_live(self, sightings: list[ObjectSighting], at: datetime) -> None:
         """Update last seen. An object missing from this read stays, marked unconfirmed."""
@@ -131,32 +138,44 @@ class ObjectMemory:
             if not key:
                 continue
             seen.add(key)
-            place = item.location_desc.strip() or "in the room"
+            place, side = _split_side(item.location_desc.strip() or "in the room", item.side)
+            held = item.with_person or _held_place(place)
             tag = self._items.get(key)
             if tag is None:
                 self._items[key] = Tag(
                     name=item.name.strip(),
                     location_desc=place,
                     last_seen_at=at,
-                    with_person=item.with_person,
+                    with_person=held,
                     on_floor=item.on_floor,
                     near_person=item.near_person,
-                    side=item.side,
+                    side=side,
                     on_head=item.on_head,
                 )
                 continue
             tag.location_desc = place
-            tag.with_person = item.with_person
+            tag.with_person = held
             tag.on_floor = item.on_floor
             tag.near_person = item.near_person
-            tag.side = item.side
+            tag.side = side
             tag.on_head = item.on_head
             tag.last_seen_at = at
             tag.unconfirmed = False
+            tag.misses = 0
+            tag.sightings += 1
             tag.name = item.name.strip() or tag.name
+        gone = []
         for key, tag in self._items.items():
-            if key not in seen:
+            if key in seen:
+                continue
+            tag.misses += 1
+            if tag.misses >= 2:
                 tag.unconfirmed = True
+            if tag.misses >= 5:
+                gone.append(key)
+        for key in gone:
+            if self._items[key].misses >= 5:
+                del self._items[key]
 
     def floor_flags(self) -> dict[str, bool]:
         return {key: tag.on_floor for key, tag in self._items.items()}
@@ -203,13 +222,9 @@ class ObjectMemory:
 
     def _find(self, name: str) -> Tag | None:
         key = _object_key(name)
-        found = self._items.get(key)
-        if found is not None:
-            return found
-        for stored, tag in self._items.items():
-            if key and (key in stored or stored in key):
-                return tag
-        return None
+        if not key:
+            return None
+        return self._items.get(key)
 
 
 class WorldModel:
@@ -397,8 +412,24 @@ def _fallback_summary(scene: SceneState) -> str:
     return f"{count} {noun}, lighting {scene.lighting}"
 
 
+_ALIASES = {
+    "key": "keys",
+    "cell phone": "phone",
+    "cellphone": "phone",
+    "mobile": "phone",
+    "mobile phone": "phone",
+    "reading glasses": "glasses",
+    "spectacles": "glasses",
+    "water bottle": "water",
+    "bottle of water": "water",
+    "drinking glass": "glass",
+    "mug": "cup",
+}
+
+
 def _object_key(name: str) -> str:
-    return " ".join(name.strip().lower().split())
+    text = " ".join(name.strip().lower().split())
+    return _ALIASES.get(text, text)
 
 
 _OBJECT_NAMES = (
@@ -554,6 +585,18 @@ def _pronoun_target(scene: SceneState) -> str | None:
     if len(held) == 1:
         return held[0]
     return None
+
+
+def _split_side(place: str, side: str) -> tuple[str, str]:
+    """Left and right belong in side, not in the place name."""
+    found = "unclear"
+    if re.search(r"\bleft\b", place, re.IGNORECASE):
+        found = "left"
+    elif re.search(r"\bright\b", place, re.IGNORECASE):
+        found = "right"
+    cleaned = re.sub(r"\b(left|right)\b", "", place, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+    return cleaned or place, side if side not in {"", "unclear"} else found
 
 
 def _held_place(text: str) -> bool:

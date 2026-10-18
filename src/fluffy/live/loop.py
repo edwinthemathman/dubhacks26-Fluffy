@@ -27,6 +27,7 @@ from fluffy.brain.decide import _plan_from_devices, complete_paired_request
 from fluffy.brain.instincts import Guess, Instincts
 from fluffy.brain.objects import ObjectNotice, important_for, object_notices, tag_lines, wants_room_scan
 from fluffy.brain.habits import HabitBook, habit_note, habit_why
+from fluffy.brain.help import HelpLadder, HelpSignal
 from fluffy.brain.safety import CHECKIN_TEXT, PAIN_TEXT_S, SafetyEffect, SafetyMachine
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
@@ -315,6 +316,13 @@ class LiveLoop:
         self.on_pause = on_pause or pause_playback
         self.delegate_execution = delegate_execution
         self.submit_plan = submit_plan
+        self.help = HelpLadder()
+        self._later_request: DecideRequest | None = None
+        self._gesture_last: list[str] = []
+        self._gesture_until: dict[str, float] = {}
+        self._upright_reads = 0
+        self._player_checked = 0.0
+        self._player_playing = False
         self.capture_epoch = 0
         self.clap_played = False
         self.music_stopped = False
@@ -382,7 +390,7 @@ class LiveLoop:
             _agent_log("E", "loop.py:room.scan", "scan requested", {"frames": len(self.frames.frames), "paused": self.paused})
             # #endregion
         elif kind == "speech":
-            await self._heard_speech(str(message.get("text", "")))
+            await self._heard_speech(str(message.get("text", "")), confidence=message.get("confidence"))
         elif kind == "profile.set" and message.get("profile") in self.profiles:
             self.profile = self.profiles[message["profile"]]
             self.safety.profile = self.profile
@@ -420,6 +428,11 @@ class LiveLoop:
         self.safety_turn = None
         self.latched.clear()
         self.music_stopped = False
+        self.clap_played = False
+        self.help = HelpLadder()
+        self._later_request = None
+        self._gesture_last.clear()
+        self._upright_reads = 0
         self.active_cues.clear()
         self.glare_since = None
         self.glare_quiet_until = None
@@ -503,7 +516,9 @@ class LiveLoop:
             # #endregion
             self._start("scan", self._scan())
         if self.pending is not None and self._idle("decide"):
-            request, self.pending = self.pending, None
+            request = self.pending
+            self.pending = self._later_request
+            self._later_request = None
             if now - request.at <= self.s.stale_s:
                 self._start("decide", self._decide(request))
 
@@ -547,8 +562,35 @@ class LiveLoop:
         self.calls.append(now)
         return True
 
-    def _request(self, request: DecideRequest) -> None:
-        self.pending = request  # newer replaces older
+    def _request(self, request: DecideRequest, *, merge: bool = False) -> None:
+        """Safety outranks a visual cue, and a visual cue outranks speech."""
+        if merge and request.kind == "spoken":
+            earlier = self.pending if self.pending is not None and self.pending.kind == "spoken" else self._later_request
+            if earlier is not None and earlier.kind == "spoken" and 0 <= request.at - earlier.at <= 1.5:
+                text = f"{earlier.utterance} {request.utterance}".strip()
+                request = DecideRequest(
+                    "spoken",
+                    text[:40],
+                    set(request.cues),
+                    earlier.at,
+                    wav=request.wav or earlier.wav,
+                    utterance=text,
+                    request_id=request.request_id or earlier.request_id,
+                )
+        rank = {"safety": 0, "spoken": 2}
+        new_rank = rank.get(request.kind, 1)
+        if self.pending is None:
+            self.pending = request
+            return
+        old_rank = rank.get(self.pending.kind, 1)
+        if new_rank < old_rank:
+            self._later_request = self.pending
+            self.pending = request
+            return
+        if new_rank > old_rank:
+            self._later_request = request
+            return
+        self.pending = request
 
     # ---------- watch lane ----------
 
@@ -606,6 +648,7 @@ class LiveLoop:
             scene = scene.model_copy(update={"sounds": ["none"], "said": ""})
         scene = _clap_not_impact(scene)
         self.scene = scene
+        self._notice_scene_gesture(scene)
         presence = self.presence.observe(scene, self.now(), self.profile.agreements.person_name)
         self.room_change = presence.room_change
         cues = self._scene_cues(scene, presence.cues)
@@ -795,18 +838,14 @@ class LiveLoop:
     def _perform_guess(self, guess: Guess, now) -> None:
         self.instincts.note_done(guess.need, now)
         if guess.kind == "safety":
-            self._safety_effects(self.safety.on_event("possible_fall"), trigger=guess.need.replace("_", " "))
+            outcome = self.help.observe(HelpSignal(guess.need, "strong", "vision", self.now()))
+            self._start_help(outcome, trigger=guess.need.replace("_", " "))
             return
         if guess.kind == "volume_up":
-            current = int(self.home.state["speaker"].get("volume") or 0)
-            if current <= 0:
-                current = 40
-            self._set_speaker_volume(min(100, current + 20))
-            self._say(None, guess.text, voice=True)
+            self.note_gesture("cup_ear", agreed=True)
             return
         if guess.kind == "stop_music":
-            self._stop_music()
-            self._say(None, guess.text, voice=True)
+            self.note_gesture("stop", agreed=True)
             return
         if guess.kind == "repeat":
             self._say(None, guess.text, voice=True)
@@ -927,10 +966,6 @@ class LiveLoop:
         if "clapping" in cues and not self.clap_played:
             self.clap_played = True
             self._play_claps()
-        # A raised palm is checked before it stops the music. A spoken "stop" still stops here.
-        palm = self.scene is not None and any(person.gesture == "stop" for person in self.scene.people)
-        if palm:
-            cues = set(cues) - {"stop_music"}
         if (
             "stop_music" in cues
             and playing
@@ -948,7 +983,13 @@ class LiveLoop:
         if "glare" in fresh:
             self.glare_quiet_until = now + self.s.glare_cooldown_s
         if "fall" in fresh:
-            self._safety_effects(self.safety.on_event("possible_fall"), trigger="fall seen")
+            fell = self.scene is not None and any(person.fell for person in self.scene.people)
+            outcome = (
+                self.help.observe(HelpSignal("fell", "strong", "vision", now))
+                if fell
+                else self.help.note_floor(now)
+            )
+            self._start_help(outcome, trigger="fall seen")
         if "fall" in fresh:
             kind = "safety"
         elif fresh & NOTIFY_SOUNDS:
@@ -1041,8 +1082,121 @@ class LiveLoop:
         self._set_speaker_volume(max(0, min(100, level)))
         return True
 
+    def _start_help(self, outcome: str, *, trigger: str) -> None:
+        if outcome == "confirm":
+            outcome = self.help.confirm(
+                on_floor="yes" if self._still_down() else "unclear",
+                hurt="yes" if self._looks_distressed() else "unclear",
+                okay="yes" if self._upright_and_moving() else "unclear",
+            )
+        if outcome != "checkin":
+            return
+        kind = "distress_call" if trigger in {"call for help", "pain", "asked for help"} else "possible_fall"
+        self._safety_effects(self.safety.on_event(kind, strength=self.help.strength or "strong"), trigger=trigger)
+
+    def _words_are_theirs(self, confidence: float) -> bool:
+        """A quiet or off-screen phrase is not a command. No score means we cannot tell."""
+        if confidence >= 0.8:
+            return True
+        if self.scene is None or not self.scene.people:
+            return confidence >= 0.5
+        if any(person.speaking != "no" for person in self.scene.people):
+            return confidence >= 0.5
+        return False
+
+    def _person_speaking(self) -> bool:
+        if self.scene is None or not self.scene.people:
+            return False
+        return any(person.speaking == "yes" for person in self.scene.people)
+
+    def _still_down(self) -> bool:
+        if self.scene is None:
+            return False
+        return any(person.on_floor or person.fell for person in self.scene.people)
+
+    def _looks_distressed(self) -> bool:
+        if self.scene is None:
+            return False
+        for person in self.scene.people:
+            signs = set(person.distress_signs) - {"motionless"}
+            if signs or person.activity == "distressed":
+                return True
+        return False
+
+    def _upright_and_moving(self) -> bool:
+        if self.scene is None or not self.scene.people:
+            return False
+        person = self.scene.people[0]
+        if person.on_floor or person.fell or person.posture == "lying":
+            return False
+        return person.posture == "standing" or person.activity in {"walking", "arriving"}
+
+    def _is_ah(self, heard: str) -> bool:
+        text = " ".join(heard.lower().split())
+        return text in {"ah", "ahh", "sigh", "a sigh", "gasp", "sharp gasp"}
+
+    def _notice_scene_gesture(self, scene: SceneState) -> None:
+        for person in scene.people:
+            if person.on_phone == "yes":
+                continue
+            if person.gesture == "stop":
+                self.note_gesture("stop", agreed=True)
+            if "cup_ear" in person.actions:
+                self.note_gesture("cup_ear", agreed=True)
+
+    def note_gesture(self, label: str, *, agreed: bool = False) -> str | None:
+        """A stop palm or a cupped ear. Two reads, or one read the scene agrees with."""
+        if label not in {"stop", "cup_ear"}:
+            self._gesture_last.clear()
+            return None
+        if label == "cup_ear" and self.scene is not None and any(person.on_phone == "yes" for person in self.scene.people):
+            return None
+        self._gesture_last.append(label)
+        self._gesture_last = self._gesture_last[-2:]
+        if not agreed and self._gesture_last != [label, label]:
+            return None
+        self._gesture_last.clear()
+        if label == "stop":
+            if not self._music_on():
+                return None
+            self._stop_music()
+            return "stop"
+        if self.now() < self._gesture_until.get("cup", 0):
+            return None
+        self._gesture_until["cup"] = self.now() + 10
+        if self._music_on():
+            current = int(self.home.state["speaker"].get("volume") or 0)
+            self._set_speaker_volume(min(100, current + 20))
+            self._say(None, "Turning the music up.", voice=True)
+            return "louder"
+        return None
+
     def _music_on(self) -> bool:
-        return bool(self.home.state["speaker"].get("sound"))
+        if self.home.state["speaker"].get("sound"):
+            self.music_stopped = False
+            return True
+        if self.now() - self._player_checked < 3:
+            return self._player_playing
+        self._player_checked = self.now()
+        try:
+            from fluffy.integrations.spotify_legacy import TOKEN_PATH, Spotify
+
+            if not TOKEN_PATH.exists():
+                self._player_playing = False
+                return False
+            status = Spotify().now_playing()
+        except Exception:
+            self._player_playing = False
+            return False
+        self._player_playing = bool(status.get("playing"))
+        if self._player_playing:
+            self.music_stopped = False
+            volume = status.get("volume")
+            if isinstance(volume, int):
+                self.home.state["speaker"]["volume"] = volume
+            if not self.home.state["speaker"].get("sound"):
+                self.home.state["speaker"]["sound"] = "music"
+        return self._player_playing
 
     def _stop_music(self) -> None:
         """A raised palm, or the words stop, pauses Spotify. It does not ask."""
@@ -1059,9 +1213,11 @@ class LiveLoop:
             if state is not None:
                 self.emit(state)
             self._tool_status(call_id, "done", result=result)
+            self._say(turn_id, "Okay, I stopped the music.", voice=True)
             self._end(turn_id, started, "acted", note="music stopped")
             return
         self._tool_status(call_id, "rejected", detail=result.get("error") or "could not pause")
+        self._say(turn_id, "I couldn't reach Spotify.", voice=True)
         self._end(turn_id, started, "nothing", note=str(result.get("error") or "could not stop the music"))
 
     def _pause_spotify(self) -> dict[str, Any]:
@@ -1129,9 +1285,14 @@ class LiveLoop:
         notable = next((l for l in ("help", "alarm", "doorbell", "knock", "clap", "pain", "impact") if l in labels), None)
         self.emit({"type": "sense.hear", "text": sound.heard, "sound": notable})
         if "help" in labels:
-            self._safety_effects(self.safety.on_event("distress_call"), trigger="call for help")
-        elif "pain" in labels:
-            self._safety_effects(self.safety.on_event("distress_call"), trigger="pain")
+            speaking = self._person_speaking()
+            tier = "strong" if speaking else "weak"
+            self._start_help(self.help.observe(HelpSignal("help", tier, "words" if speaking else "sound", self.now())), trigger="call for help")
+        elif "pain" in labels and not self._is_ah(sound.heard):
+            outcome = self.help.observe(HelpSignal("pain", "supporting", "sound", self.now()))
+            if self._looks_distressed():
+                outcome = self.help.observe(HelpSignal("distress", "supporting", "vision", self.now()))
+            self._start_help(outcome, trigger="pain")
         heard_scene = apply_sound_read(self.scene, sound)
         cues = self._scene_cues(heard_scene, set()) if heard_scene is not None else set()
         if "clap" in labels:
@@ -1162,10 +1323,12 @@ class LiveLoop:
             )
         )
 
-    async def _heard_speech(self, text: str) -> None:
+    async def _heard_speech(self, text: str, confidence: float | None = None) -> None:
         """Chrome's live transcript. The words are the decision, the way a typed line is."""
         text = text.strip()
         if not text:
+            return
+        if isinstance(confidence, (int, float)) and not self._words_are_theirs(float(confidence)):
             return
         self.speech_at = self.now()
         self.timings.speech_to_tool_ms = None
@@ -1180,7 +1343,10 @@ class LiveLoop:
             return
         if self._spoken_volume(text):
             return
-        self._request(DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text))
+        self._request(
+            DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text),
+            merge=True,
+        )
 
     def _recent_speech(self) -> bool:
         return self.now() - self.speech_at < 8
@@ -1363,8 +1529,14 @@ class LiveLoop:
                 why = reasons.get("alert_caregiver") or "looks like a fall"
                 self.emit({"type": "think", "turn_id": turn_id, "note": f"model: alert caregiver ({why})"[:48]})
             if self.safety.phase in {"idle", "watching"} and wants_help:
-                self._safety_effects(self.safety.on_event("possible_fall"), trigger="model saw a fall")
-                self._end(turn_id, started, "asked", note="check-in started")
+                confidence = min((call.confidence for call in result.device if call.name == "alert_caregiver"), default=0)
+                if confidence >= 0.7:
+                    outcome = self.help.observe(HelpSignal("alert_caregiver", "supporting", "model", self.now()))
+                    if outcome == "checkin":
+                        self._start_help(outcome, trigger="model saw a fall")
+                        self._end(turn_id, started, "asked", note="check-in started")
+                        return
+                self._end(turn_id, started, "nothing", note="help needs more than the model's call")
             else:
                 self._end(turn_id, started, "nothing", note="safety check-in handles this")
             return
@@ -1494,7 +1666,12 @@ class LiveLoop:
             self._safety_effects(self.safety.on_answer("okay"))
             return
         if self.safety.phase in {"checkin", "checkin_repeat"}:
-            raw = "okay" if choice in {"yes", "okay", "ok"} else "help"
+            if choice in {"yes", "okay", "ok"}:
+                raw = "okay"
+            elif choice in {"help", "need help"}:
+                raw = "help"
+            else:
+                raw = choice
             if self.safety_turn:
                 self.emit({"type": "ask.answer", "turn_id": self.safety_turn, "by": by, "choice": raw})
             self.policy.note_answered()
@@ -1552,7 +1729,11 @@ class LiveLoop:
         if self._open_question() is None:
             return False
         words = text.lower().strip(" .!?")
-        if words in {"i'm okay", "im okay", "i am okay"} or words.startswith(("i'm okay", "im okay", "i am okay")):
+        if "help me find" in words or "help me look" in words:
+            question = self._replace_open_question(by=by, said=text)
+            self._follow_up(text, question, None)
+            return True
+        if words in {"i'm okay", "im okay", "i am okay", "i'm fine", "im fine", "no, i'm fine", "no i'm fine"} or "i'm fine" in words or "i'm okay" in words:
             await self._answer("okay", by=by)
             return True
         if self.open_instinct:
@@ -1631,20 +1812,23 @@ class LiveLoop:
             self._fall_absent_since = None
             self._fall_was_here = False
             return
-        if "fall" in self.active_cues:
+        if "fall" in self.active_cues or self._still_down():
             self._fall_was_here = True
-            self._fall_absent_since = None
+            self._upright_reads = 0
+            self.help.saw_down()
+            self.safety.evidence_present = True
             return
         if not self._fall_was_here:
             return
-        if self._fall_absent_since is None:
-            self._fall_absent_since = self.now()
+        if self._upright_and_moving():
+            self._upright_reads += 1
+            self.safety.evidence_present = False
+            if self.help.note_upright():
+                self._fall_was_here = False
+                self._upright_reads = 0
+                self._safety_effects(self.safety.stand_down())
             return
-        if self.now() - self._fall_absent_since < FALL_CLEAR_S:
-            return
-        self._fall_absent_since = None
-        self._fall_was_here = False
-        self._safety_effects(self.safety.stand_down())
+        self._upright_reads = 0
 
     def _safety_effects(self, effects: list[SafetyEffect], *, trigger: str = "safety") -> None:
         for effect in effects:

@@ -8,7 +8,7 @@ export type SpeechPhase = {
   error: string | null;
 };
 
-type SpeechPhrase = { isFinal: boolean; 0: { transcript: string } };
+type SpeechPhrase = { isFinal: boolean; 0: { transcript: string; confidence?: number } };
 
 type SpeechListener = {
   continuous: boolean;
@@ -37,7 +37,7 @@ const DENIED = "Microphone speech recognition was denied. You can still type.";
 
 export function useChromeSpeech(
   enabled: boolean,
-  onFinal: (text: string) => void,
+  onFinal: (text: string, confidence?: number) => void,
   onStatus: (phase: SpeechPhase) => void,
   isSpeaking: () => boolean,
 ) {
@@ -74,7 +74,7 @@ export function useChromeSpeech(
         if (!text) continue;
         phraseRef.current = text;
         statusRef.current({ listening: true, phrase: text, error: null });
-        finalRef.current(text);
+        finalRef.current(text, phrase[0].confidence);
       }
     };
     recognition.onerror = (event) => {

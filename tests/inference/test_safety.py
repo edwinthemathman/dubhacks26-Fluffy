@@ -90,12 +90,14 @@ def test_silence_repeats_then_alerts_with_the_fall_message():
     assert machine.tick() == []
 
 
-def test_no_means_not_okay():
+def test_a_bare_no_asks_again():
     clock = FrozenClock()
     machine = SafetyMachine(clock, profiles()["blind"])
     machine.on_event("possible_fall")
     effects = machine.on_answer("no")
-    assert effects[0].kind == "alert"
+    assert effects[0].kind == "checkin"
+    assert "need help" in effects[0].text.lower()
+    assert machine.on_answer("No, I'm fine")[0].kind == "cleared"
 
 
 def test_deaf_checkin_does_not_rely_on_speech():

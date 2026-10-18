@@ -86,6 +86,11 @@ export default function Home() {
           </div>
 
           <form data-bg-clear onSubmit={handleSubmit} className="relative z-10 flex flex-col gap-3">
+            {(session.state.captions.at(-1) || (latest?.recorded && latest.recordedSpoken) || session.state.question) ? (
+              <p aria-live="polite" className="text-lg leading-snug text-neutral-900">
+                {session.state.captions.at(-1)?.text ?? (latest?.recorded ? latest.recordedSpoken : null) ?? session.state.question?.text}
+              </p>
+            ) : null}
             <textarea
               ref={inputRef}
               value={session.draft}
@@ -103,6 +108,13 @@ export default function Home() {
                 <kbd className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-xs font-medium tracking-tighter text-neutral-500">Enter</kbd> for a new line
               </span>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => session.scanRoom()}
+                  className="h-9 rounded-xl border border-neutral-200 px-3 text-xs font-medium text-neutral-500"
+                >
+                  Scan the room
+                </button>
                 <button
                   type="button"
                   aria-pressed={session.recordedDemo}
@@ -138,9 +150,6 @@ export default function Home() {
           ) : null}
           <CameraPreview />
           {session.state.notice ? <p className="text-sm text-neutral-500">{session.state.notice}</p> : null}
-          {session.state.captions[session.state.captions.length - 1] ? (
-            <p className="text-sm text-neutral-700">{session.state.captions[session.state.captions.length - 1].text}</p>
-          ) : null}
         </section>
 
         {showThinking && (
@@ -225,7 +234,6 @@ export default function Home() {
                 actions={actions}
                 recorded={latest?.recorded}
                 recordedRows={latest?.recordedRows}
-                spoken={latest?.recorded ? latest.recordedSpoken : session.state.captions.at(-1)?.text}
                 question={session.state.question}
                 answering={session.answering}
                 onAnswer={(choice) => void session.answerQuestion(choice)}

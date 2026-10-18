@@ -29,6 +29,7 @@ type SessionApi = {
   stream: MediaStream | null;
   now: number;
   submitText: () => Promise<void>;
+  scanRoom: () => void;
   answerQuestion: (choice: string) => Promise<void>;
   confirmRecorded: (requestId: string) => void;
   startFluffy: () => Promise<void>;
@@ -247,7 +248,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     setDraft("");
   }, [apply, config, draft, recordedDemo, submitting]);
 
-  const submitTranscript = useCallback(async (phrase: string) => {
+  const submitTranscript = useCallback(async (phrase: string, confidence?: number) => {
     const text = phrase.trim();
     if (!text || recordedDemo) return;
     const requestId = createId("req");
@@ -260,6 +261,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
       captured_at: new Date().toISOString(),
       final: true,
       source: "browser_speech",
+      ...(typeof confidence === "number" ? { confidence } : {}),
     });
     if (!result.ok) {
       apply({ type: "submit.failed", requestId, detail: result.detail || "The transcript was not accepted." });
@@ -270,7 +272,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
   }, [apply, config, recordedDemo]);
 
   const speechEnabled = started && !paused && !recordedDemo && sensing.mic !== "muted";
-  useChromeSpeech(speechEnabled, (text) => void submitTranscript(text), setSpeech, () => playerRef.current?.speaking === true);
+  useChromeSpeech(speechEnabled, (text, confidence) => void submitTranscript(text, confidence), setSpeech, () => playerRef.current?.speaking === true);
 
   const answerQuestion = useCallback(async (choice: string) => {
     const question = stateRef.current.question;
@@ -382,6 +384,9 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     stream,
     now,
     submitText,
+    scanRoom: () => {
+      socketRef.current?.send(JSON.stringify({ type: "room.scan" }));
+    },
     answerQuestion,
     confirmRecorded: (requestId) => apply({ type: "recorded.confirm", requestId }),
     startFluffy,

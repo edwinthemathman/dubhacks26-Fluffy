@@ -677,7 +677,7 @@ def test_clapping_plays_the_song_without_asking():
     assert played == ["go"]
     loop.reset()
     loop._on_cues({"clapping"}, trigger="clapping")
-    assert played == ["go"]
+    assert played == ["go", "go"]
 
 
 def test_a_seen_clap_plays_the_song():

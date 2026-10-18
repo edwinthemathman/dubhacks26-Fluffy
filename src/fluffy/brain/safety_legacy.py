@@ -25,14 +25,15 @@ from fluffy.profile.model import Profile
 
 Phase = Literal["idle", "checkin", "checkin_repeat", "alerted", "watching"]
 CHECKIN_TEXT = "Are you okay?"
+REASK_TEXT = "Are you okay, or do you need help?"
 SECOND_CHECKIN_S = 30
 ALERT_S = 60
 FOLLOWUP_S = 60
 WATCH_S = 5 * 60
 PAIN_TEXT_S = 15
 
-_OKAY = {"okay", "ok", "yes", "nod", "i'm okay", "im okay", "i am okay"}
-_HELP = {"help", "need help", "shake", "no"}
+_OKAY = {"okay", "ok", "yes", "nod", "i'm okay", "im okay", "i am okay", "i'm fine", "im fine", "i am fine"}
+_HELP = {"help", "need help", "i need help", "shake"}
 
 
 class SafetyEffect(BaseModel):
@@ -55,8 +56,10 @@ class SafetyMachine:
         self.watch_until: datetime | None = None
         self.next_checkin: datetime | None = None
         self.event_kind: str | None = None
+        self.strength = "strong"
+        self.evidence_present = True
 
-    def on_event(self, kind: str) -> list[SafetyEffect]:
+    def on_event(self, kind: str, *, strength: str = "strong") -> list[SafetyEffect]:
         if kind not in {"possible_fall", "distress_call"}:
             return []
         # A fall that is still going does not start another check-in.
@@ -68,9 +71,11 @@ class SafetyMachine:
         self.phase = "checkin"
         self.started = self.clock.now()
         self.event_kind = kind
+        self.strength = strength if strength in {"strong", "supporting"} else "strong"
+        self.evidence_present = True
         self.watch_until = None
         self.next_checkin = None
-        return [self._checkin(louder=False, pattern="pulse1")]
+        return [self._checkin(louder=False, pattern="pulse1", text=CHECKIN_TEXT)]
 
     def on_answer(self, raw: str) -> list[SafetyEffect]:
         answer = _classify(raw)
@@ -89,7 +94,7 @@ class SafetyMachine:
             ]
         if answer == "help":
             return self._alert(because="the person needs help")
-        return []
+        return [self._checkin(louder=False, pattern="pulse1", text=REASK_TEXT)]
 
     def tick(self) -> list[SafetyEffect]:
         now = self.clock.now()
@@ -99,6 +104,10 @@ class SafetyMachine:
                 self.phase = "checkin_repeat"
                 return [self._checkin(louder=True, pattern="strobe")]
             if self.phase == "checkin_repeat" and elapsed >= ALERT_S:
+                if self.strength == "supporting" and not self.evidence_present:
+                    self.phase = "idle"
+                    self.started = None
+                    return [SafetyEffect(kind="cleared", text="They got up. I didn't text anyone.")]
                 return self._alert(because="no response")
         if self.phase == "alerted" and self.next_checkin is not None and now >= self.next_checkin:
             self.next_checkin = now + timedelta(seconds=FOLLOWUP_S)
@@ -126,7 +135,7 @@ class SafetyMachine:
         self.event_kind = None
         return [SafetyEffect(kind="cleared", text="")]
 
-    def _checkin(self, *, louder: bool, pattern: str) -> SafetyEffect:
+    def _checkin(self, *, louder: bool, pattern: str, text: str = CHECKIN_TEXT) -> SafetyEffect:
         speech = self.profile.output.speech
         plans = [
             self._tool_plan(
@@ -138,27 +147,27 @@ class SafetyMachine:
                     "duration_s": 6 if louder else 3,
                 },
                 action_class="notify",
-                intent=CHECKIN_TEXT,
+                intent=text,
             ),
             self._tool_plan(
                 "show_caption",
-                {"text": CHECKIN_TEXT, "size": "xl", "priority": "high"},
+                {"text": text, "size": "xl", "priority": "high"},
                 action_class="notify",
-                intent=CHECKIN_TEXT,
+                intent=text,
             ),
         ]
         if speech:
             plans.append(
                 self._tool_plan(
                     "announce",
-                    {"text": CHECKIN_TEXT, "room": "living_room"},
+                    {"text": text, "room": "living_room"},
                     action_class="notify",
-                    intent=CHECKIN_TEXT,
+                    intent=text,
                 )
             )
         return SafetyEffect(
             kind="checkin",
-            text=CHECKIN_TEXT,
+            text=text,
             speech=speech,
             caption=True,
             light_pattern=pattern,
@@ -233,10 +242,12 @@ class SafetyMachine:
         )
 
 
-def _classify(raw: str) -> Literal["okay", "help"] | None:
-    text = " ".join(raw.strip().lower().split())
-    if text in _OKAY or "i'm okay" in text or "im okay" in text or "i am okay" in text:
+def _classify(raw: str) -> Literal["okay", "help", "reask"] | None:
+    text = " ".join(raw.strip().lower().replace("’", "'").split())
+    if text in _OKAY or "i'm okay" in text or "im okay" in text or "i am okay" in text or "i'm fine" in text or "im fine" in text:
         return "okay"
     if text in _HELP:
         return "help"
-    return None
+    if text == "no":
+        return "reask"
+    return "reask"

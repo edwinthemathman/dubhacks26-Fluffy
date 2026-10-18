@@ -96,16 +96,21 @@ def test_developer_dim_updates_authoritative_state(tmp_path):
 
         deadline = time.time() + 10
         snapshot = None
+        refreshed = None
         while time.time() < deadline:
             snapshot = _output_state(settings)
             floor = next(light for light in snapshot["lights"] if light["id"] == "lamp.living_floor")
-            if floor["luminosity"] == 35:
-                break
+            if floor["luminosity"] != 35:
+                time.sleep(0.05)
+                continue
             time.sleep(0.05)
+            refreshed = _output_state(settings)
+            if refreshed["revision"] == snapshot["revision"]:
+                break
         else:
-            raise AssertionError(f"brightness did not change: {snapshot}")
+            raise AssertionError(f"brightness did not settle: {snapshot}")
 
-        refreshed = _output_state(settings)
+        assert refreshed is not None
         floor = next(light for light in refreshed["lights"] if light["id"] == "lamp.living_floor")
         assert floor["luminosity"] == 35
         assert refreshed["revision"] == snapshot["revision"]

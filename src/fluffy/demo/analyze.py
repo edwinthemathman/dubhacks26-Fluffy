@@ -309,13 +309,13 @@ SOUND_PROMPT = (
     "help means a call for help, or someone saying they fell, "
     "can't get up, or need help. "
     "'Help me find my keys' is speech, not help. "
-    "pain means a groan, moan, cry, yelp, 'ow', 'ah', or a sharp gasp. "
+    "pain means a groan, moan, cry, yelp, or 'ow'. "
     "Pain needs no words; label it even if nobody says anything. "
     "impact means a thud, crash, bump, or something or someone hitting the floor. "
     "snoring means they sound asleep. "
     "door is only a door opening or closing, a latch, or keys. "
     "A heavy thud of a body or object hitting the floor is impact, not door. "
-    "If you are unsure between door and impact, use impact. "
+    "If you are unsure between door and impact, use neither. "
     "After an impact, listen for groans, gasps, or hard breathing and label pain. "
     "doorbell, knock, and alarm are those sounds. "
     "clap means hands clapping, one clap or several. "
@@ -630,6 +630,14 @@ def _person_line(person) -> str:
     parts.append(f"eyes {person.eyes}")
     if person.gesture != "none":
         parts.append(person.gesture)
+    if person.actions:
+        parts.append("actions: " + ", ".join(item.label for item in person.actions))
+    if person.holding:
+        parts.append("holding: " + ", ".join(person.holding))
+    if person.zone != "unknown":
+        parts.append(person.zone)
+    if person.facing != "unclear":
+        parts.append(f"facing {person.facing}")
     return ", ".join(parts)
 
 
@@ -682,7 +690,7 @@ def _user_text(
     lines.extend(
         [
             f"- Transcript: {words}",
-            "The transcript is a decision. If it asks for several things, call every matching tool "
+            "When the words and the picture agree, call every matching tool "
             "in this same turn. It's getting late and they want music means play_sound sound=music "
             "and dim_lights together. "
             "If it says they fell, can't get up, or need help, call alert_caregiver and nothing else. "

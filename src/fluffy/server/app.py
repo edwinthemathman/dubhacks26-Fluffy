@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -58,6 +59,7 @@ class TranscriptBody(TextInputBody):
     captured_at: str | None = None
     final: bool = True
     source: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class FrameBody(BaseModel):
@@ -228,7 +230,10 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
         perception = getattr(app.state, "perception", None)
         if perception is not None:
             kind = "typed" if explicit else "speech"
-            await perception.loop.on_client({"type": kind, "text": body.text, "request_id": body.request_id})
+            message = {"type": kind, "text": body.text, "request_id": body.request_id}
+            if getattr(body, "confidence", None) is not None:
+                message["confidence"] = body.confidence
+            await perception.loop.on_client(message)
             return JSONResponse(status_code=202, content={"status": "accepted", "request_id": body.request_id, "completed": False})
         app.state.text_inflight.add(body.request_id)
 
@@ -495,7 +500,16 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
         )
         try:
             while True:
-                await socket.receive_text()
+                raw = await socket.receive_text()
+                perception = getattr(app.state, "perception", None)
+                if perception is None:
+                    continue
+                try:
+                    message = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(message, dict) and message.get("type") in {"room.scan", "typed", "answer", "speech"}:
+                    await perception.loop.on_client(message)
         except WebSocketDisconnect:
             runtime.ui_clients.discard(socket)
 

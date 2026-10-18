@@ -65,6 +65,17 @@ class Spotify:
             result["artist"] = track["artist"]
         return result
 
+    def now_playing(self) -> dict[str, Any]:
+        token = self._token()
+        if token is None:
+            return {"ok": False, "playing": False}
+        found = self._request("GET", f"{API}/me/player", token)
+        if "error" in found:
+            return {"ok": False, "playing": False}
+        body = found.get("body") or {}
+        device = body.get("device") or {}
+        return {"ok": True, "playing": bool(body.get("is_playing")), "volume": device.get("volume_percent")}
+
     def stop(self) -> dict[str, Any]:
         token = self._token()
         if token is None:
