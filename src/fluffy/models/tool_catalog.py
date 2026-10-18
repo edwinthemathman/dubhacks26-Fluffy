@@ -160,7 +160,11 @@ def _device_call_model(args_model: type[BaseModel]) -> type[BaseModel]:
             Field(
                 ge=0,
                 le=1,
-                description="0.8-1.0 plainly seen or heard, 0.5-0.7 likely, lower if guessing.",
+                description=(
+                    "0.8-1.0 when plainly seen, when seen and heard together, when they clearly asked, "
+                    "or for a doorbell, knock, or alarm. "
+                    "0.3 or lower when only heard, or the video is unclear."
+                ),
             ),
         ),
         reason=(

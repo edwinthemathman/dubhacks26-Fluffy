@@ -93,6 +93,8 @@ class HelpLadder:
 
     def _supporting_agrees(self, at: float) -> bool:
         recent = [item for item in self.signals if item.tier == "supporting" and at - item.at <= WINDOW_S]
+        if not any(item.sense == "vision" for item in recent):
+            return False
         if len(recent) >= 3:
             return True
         senses = {item.sense for item in recent}

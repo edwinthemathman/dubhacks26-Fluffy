@@ -19,7 +19,7 @@ nod = true
 pointing = true
 
 [questions]
-confirm_back = "always"
+confirm_back = "low_confidence"
 style = "one_at_a_time"
 repeat_once = true
 repeat_after_s = 20

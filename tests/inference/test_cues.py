@@ -1,7 +1,8 @@
 """Cue policy. Vision leads; sound backs it up and breaks ties."""
 
 from fluffy.brain.consent import ConsentManager
-from fluffy.brain.cues import derive, judge, volume_request, wants_music_stop
+from fluffy.brain.arbiter import Arbiter
+from fluffy.brain.cues import cap_confidence, derive, judge, support, unidentified_sound, volume_request, wants_music_stop
 from fluffy.clock import FrozenClock
 from fluffy.ids import IdFactory
 from fluffy.models import Action, Consent, Trigger, build_plan
@@ -290,10 +291,51 @@ def test_a_thud_while_someone_sits_fine_is_not_a_fall():
     assert "fall" not in derive(scene)
 
 
-def test_a_seen_or_heard_clap_is_clapping():
-    assert "clapping" in derive(_scene(PersonState(gesture="clapping", posture="standing")))
-    assert "clapping" in derive(_scene(sounds=["clap"]))
+def test_a_clap_needs_the_hands_and_the_sound():
+    both = _scene(PersonState(gesture="clapping", posture="standing"), sounds=["clap"])
+    assert support(both, "clap") == "both"
+    assert "clapping" in derive(both)
+    assert "clapping" not in derive(_scene(sounds=["clap"]))
+    assert "clapping" not in derive(_scene(PersonState(gesture="clapping", posture="standing")))
     assert "clapping" not in derive(SceneState(summary="they clap their hands"))
+
+
+def test_a_collapse_that_stays_down_with_a_thud_is_a_fall():
+    scene = _scene(
+        PersonState(posture="lying", on_floor=True, location_surface="floor", fell=True),
+        sounds=["impact"],
+    )
+    assert support(scene, "fall") == "both"
+    assert "fall" in derive(scene)
+
+
+def test_snoring_needs_someone_resting_in_view():
+    assert "falling_asleep" not in derive(_scene(sounds=["snoring"]))
+    asleep = _scene(PersonState(posture="lying", location_surface="sofa"), sounds=["snoring"])
+    assert support(asleep, "asleep") == "both"
+    assert "falling_asleep" in derive(asleep)
+
+
+def test_a_heard_only_plan_is_capped_and_dropped():
+    clock = FrozenClock()
+    scene = _scene(sounds=["impact"])
+    plan = dim_plan(clock, confidence=0.9)
+    capped = cap_confidence(plan, derive(scene), scene)
+    assert capped is not None
+    assert capped.confidence == 0.3
+    assert unidentified_sound(scene)
+    assert Arbiter(clock).review(capped).status == "drop"
+
+
+def test_a_doorbell_and_a_spoken_request_are_not_capped():
+    clock = FrozenClock()
+    scene = _scene(sounds=["doorbell"])
+    notify = cap_confidence(_notify_plan(clock, tool="flash_lights"), {"doorbell"}, scene)
+    assert notify is not None
+    assert notify.confidence == 0.9
+    spoken = cap_confidence(dim_plan(clock, kind="spoken", confidence=0.55), set(), scene)
+    assert spoken is not None
+    assert spoken.confidence == 0.85
 
 
 def test_a_raised_palm_or_the_word_stop_stops_the_music():

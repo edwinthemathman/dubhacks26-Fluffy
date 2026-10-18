@@ -21,7 +21,7 @@ def test_profile_presets_match_the_plan():
     elderly = loaded["elderly"]
     assert elderly.output.speech is True
     assert "water bottle" in elderly.important_objects
-    assert elderly.questions.confirm_back == "always"
+    assert elderly.questions.confirm_back == "low_confidence"
 
     blind = loaded["blind"]
     assert blind.output.speech is True

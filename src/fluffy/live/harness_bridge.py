@@ -6,6 +6,7 @@ import asyncio
 import base64
 import binascii
 import logging
+import os
 from array import array
 from dataclasses import dataclass, field
 
@@ -88,7 +89,13 @@ class HarnessPerception:
     @classmethod
     def build(cls, runtime: Runtime, settings: RuntimeSettings, client=None) -> HarnessPerception:
         profiles = load_profiles(settings.root / "config" / "profiles")
-        profile_id = "speech_cognitive" if "speech_cognitive" in profiles else next(iter(profiles))
+        chosen = os.environ.get("FLUFFY_PROFILE", "elderly")
+        if chosen in profiles:
+            profile_id = chosen
+        elif "elderly" in profiles:
+            profile_id = "elderly"
+        else:
+            profile_id = next(iter(profiles))
         habits_path = settings.root / "config" / "habits.toml"
         habits = load_habits(habits_path) if habits_path.exists() else None
         perceiver = PerceptronPerceiver(client) if client is not None else UnavailablePerceiver()
@@ -180,9 +187,8 @@ class HarnessPerception:
             if kind == "inference.error" or (kind == "inference.status" and event.get("status") == "unavailable"):
                 self.stats.perceptron_errors += 1
             payload = {key: value for key, value in event.items() if key != "type" and key != "thumb"}
-            if kind == "sense.hear":
-                payload.pop("text", None)
-                payload["text"] = payload.get("sound") or "sound"
+            if kind == "sense.hear" and "sound" in event:
+                payload["text"] = event.get("sound") or "sound"
             try:
                 await self.runtime.emit(self.settings.session_id, kind, payload)
             except Exception:

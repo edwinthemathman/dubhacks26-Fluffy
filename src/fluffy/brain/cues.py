@@ -19,6 +19,8 @@ from fluffy.perception.scene import SceneState
 from fluffy.profile.model import Profile
 
 CueDecision = Literal["act", "ask", "ask_for_help", "notify", "quiet"]
+Support = Literal["both", "seen", "heard", "none"]
+PhysicalEvent = Literal["clap", "fall", "asleep"]
 
 NOTIFY_SOUNDS = frozenset({"doorbell", "knock", "alarm"})
 LIGHT_TOOLS = frozenset({"dim_lights", "set_light_warmth"})
@@ -107,6 +109,42 @@ def heard(scene: SceneState | None) -> set[str]:
     return {label for label in scene.sounds if label != "none"}
 
 
+def support(scene: SceneState | None, event: PhysicalEvent) -> Support:
+    """Whether the picture, the sound, or both back this physical event."""
+    if scene is None:
+        return "none"
+    sounds = heard(scene)
+    if event == "clap":
+        seen = any(person.gesture == "clapping" for person in scene.people)
+        heard_it = bool(sounds & {"clap", "impact"})
+    elif event == "fall":
+        seen = any(_fall_seen(person) for person in scene.people)
+        heard_it = bool(sounds & {"impact", "pain"})
+    else:
+        seen = any(person.posture in {"lying", "sitting"} for person in scene.people)
+        heard_it = "snoring" in sounds
+    if seen and heard_it:
+        return "both"
+    if seen:
+        return "seen"
+    if heard_it:
+        return "heard"
+    return "none"
+
+
+def unidentified_sound(scene: SceneState | None) -> bool:
+    """A clap or a thud with no clear picture. It is not an event."""
+    if scene is None:
+        return False
+    if not heard(scene) & {"impact", "clap"}:
+        return False
+    if not scene.people:
+        return True
+    if all(person.posture == "unknown" for person in scene.people):
+        return True
+    return any(person.face_visible == "no" for person in scene.people)
+
+
 def derive(scene: SceneState | None) -> set[str]:
     """Cue names for this scene. Fall wins over sleep."""
     if scene is None:
@@ -115,18 +153,14 @@ def derive(scene: SceneState | None) -> set[str]:
     cues: set[str] = set()
     if "help" in sounds:
         cues.add("fall")
-    if _thud_out_of_sight(scene, sounds):
-        cues.add("fall")
     for person in scene.people:
         if _looks_hurt(person, sounds):
             cues.add("fall")
         if person.gesture == "shielding_eyes":
             cues.add("glare")
-        if person.gesture == "clapping":
-            cues.add("clapping")
         if person.gesture == "stop":
             cues.add("stop_music")
-    if "clap" in sounds:
+    if support(scene, "clap") == "both":
         cues.add("clapping")
     if wants_music_stop(scene.said):
         cues.add("stop_music")
@@ -196,6 +230,47 @@ def build_help_plan(clock: Clock, profile: Profile) -> Plan:
     )
 
 
+def cap_confidence(plan: Plan | None, cues: set[str], scene: SceneState | None) -> Plan | None:
+    """A heard-only physical event cannot be a confident action.
+
+    A spoken request, and a doorbell, knock, or alarm, keep the model's number.
+    A spoken request the model scored timidly is lifted into the certain band,
+    because the words were the request.
+    """
+    if plan is None:
+        return None
+    if plan.trigger.kind == "spoken":
+        if 0.4 <= plan.confidence < 0.85:
+            return plan.model_copy(update={"confidence": 0.85})
+        return plan
+    if plan.action_class == "notify":
+        return plan
+    event = _physical_cue(cues)
+    heard_only = event is not None and support(scene, event) == "heard"
+    if not heard_only and not unidentified_sound(scene):
+        return plan
+    if plan.confidence <= 0.3:
+        return plan
+    return plan.model_copy(update={"confidence": 0.3})
+
+
+def _physical_cue(cues: set[str]) -> PhysicalEvent | None:
+    if "clapping" in cues:
+        return "clap"
+    if "fall" in cues:
+        return "fall"
+    if "falling_asleep" in cues:
+        return "asleep"
+    return None
+
+
+def _fall_seen(person) -> bool:
+    off_furniture = person.location_surface == "floor"
+    if person.fell or person.activity in {"distressed", "fallen"}:
+        return True
+    return bool(person.on_floor and off_furniture)
+
+
 def _looks_hurt(person, sounds: set[str]) -> bool:
     """A fall or injury, from the picture first. Words are not required."""
     # An unknown surface is not evidence that they left the sofa or the bed.
@@ -213,26 +288,15 @@ def _looks_hurt(person, sounds: set[str]) -> bool:
     return bool(signs) and "pain" in sounds
 
 
-def _thud_out_of_sight(scene: SceneState, sounds: set[str]) -> bool:
-    """A thud counts only with a person still in view who is not clearly fine.
-
-    Impact alone, or a thud with nobody in the picture, is a weak hint.
-    """
-    if "impact" not in sounds or not scene.people:
-        return False
-    if "pain" not in sounds:
-        return False
-    return any(person.activity == "leaving" or person.posture == "unknown" for person in scene.people)
-
-
 def _asleep(scene: SceneState, sounds: set[str]) -> bool:
     # Speech is the difference between resting and being awake.
     if "speech" in sounds:
         return False
-    if "snoring" in sounds:
-        return True
     if sounds & {"door", "doorbell", "knock", "alarm", "pain", "impact"}:
         return False
+    resting = any(person.posture in {"lying", "sitting"} for person in scene.people)
+    if "snoring" in sounds:
+        return resting
     return any(_looks_asleep(person) for person in scene.people)
 
 

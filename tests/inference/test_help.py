@@ -48,7 +48,14 @@ def test_help_from_the_television_does_nothing():
 def test_the_model_alone_does_not_check_in():
     ladder = HelpLadder()
     assert ladder.observe(HelpSignal("alert_caregiver", "supporting", "model", 0)) == "none"
-    assert ladder.observe(HelpSignal("pain", "supporting", "sound", 1)) == "checkin"
+    assert ladder.observe(HelpSignal("pain", "supporting", "sound", 1)) == "none"
+
+
+def test_three_sounds_without_a_picture_do_not_check_in():
+    ladder = HelpLadder()
+    assert ladder.observe(HelpSignal("impact", "supporting", "sound", 0)) == "none"
+    assert ladder.observe(HelpSignal("pain", "supporting", "sound", 1)) == "none"
+    assert ladder.observe(HelpSignal("impact", "supporting", "sound", 2)) == "none"
 
 
 def test_no_i_am_fine_is_okay_and_a_bare_no_asks_again():

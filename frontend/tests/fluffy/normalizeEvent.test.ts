@@ -60,6 +60,24 @@ describe("normalizeEvent", () => {
     );
     expect(started[0]).toMatchObject({ type: "action", actionId: "act_demo", status: "verified" });
   });
+  it("treats a live speaker update as the room that is actually playing", () => {
+    const [playing] = normalizeEvent(
+      { type: "state", speaker: { sound: "music", volume: 40, track: null } },
+      { now: NOW },
+    );
+    expect(playing).toMatchObject({
+      type: "home",
+      patch: { speaker: { sound: "music", volume: 40, playback: "playing", confirmed: true } },
+    });
+    const [stopped] = normalizeEvent(
+      { type: "state", speaker: { sound: null, volume: 0, track: null } },
+      { now: NOW },
+    );
+    expect(stopped).toMatchObject({
+      patch: { speaker: { sound: null, playback: "stopped", confirmed: true } },
+    });
+  });
+
   it("maps legacy live events and keeps lamp and ceiling apart", () => {
     const events = normalizeEvent(
       { type: "state", lamp: { luminosity: 1, warmth: "warm" }, ceiling: { luminosity: 40 }, blinds: 0 },

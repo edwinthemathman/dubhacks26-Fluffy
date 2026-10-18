@@ -14,7 +14,7 @@ from typing import Any
 from perceptron import Client, SDKError, pydantic_format, video
 
 from fluffy.brain.consent import ConsentManager
-from fluffy.brain.cues import derive
+from fluffy.brain.cues import cap_confidence, derive, unidentified_sound
 from fluffy.brain.objects import find_line, important_for, object_notices, tag_lines
 from fluffy.brain.habits import (
     clip_transition_cues,
@@ -231,6 +231,7 @@ def _analyze_uploaded(
         ids=IdFactory(),
     )
     plan = complete_paired_request(plan, f"{transcript}\n{utterance}")
+    plan = cap_confidence(plan, cues, scene)
     habit = None
     if plan is None and "fall" in cues:
         trace.append(
@@ -287,6 +288,7 @@ def _analyze_uploaded(
         transcript=transcript,
         transcript_error=transcript_error,
         plan=plan,
+        unidentified_sound=unidentified_sound(scene),
         consent=consent,
         rejected=rejected,
         rounds=rounds,
@@ -766,8 +768,10 @@ def _result(
     trace: list[dict[str, Any]],
     tags: list[dict[str, str]] | None = None,
     notices: list[dict[str, Any]] | None = None,
+    unidentified_sound: bool = False,
 ) -> dict[str, Any]:
     return {
+        "unidentified_sound": unidentified_sound,
         "reply": reply,
         "asked": asked,
         "outcome": outcome,

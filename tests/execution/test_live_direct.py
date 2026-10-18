@@ -45,6 +45,7 @@ def _settings(tmp_path):
 def test_harness_builds_a_loop_that_runs_tools(tmp_path):
     settings = _settings(tmp_path)
     perception = HarnessPerception.build(build_runtime(settings), settings)
+    assert perception.loop.profile.id == "elderly"
     assert perception.loop.delegate_execution is False
     assert perception.loop.submit_plan is None
     assert perception.loop.on_clap.__name__ == "play_clap_song"

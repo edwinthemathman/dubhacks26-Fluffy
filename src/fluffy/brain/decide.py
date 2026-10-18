@@ -201,18 +201,20 @@ def system_prompt(profile: Profile) -> str:
             "CONSENT IS HANDLED FOR YOU",
             "A tool call is only a proposal. The app asks the person before anything changes, "
             "Caregiver texts are not yours to send. "
-            "So never hold back a fitting tool call to be polite or to wait for permission. "
-            "Call alert_caregiver only for the help signs above.",
+            "So never hold back a fitting tool call to be polite or to wait for permission.",
             requests,
             "Habits are things the person asked for in advance. When one applies, propose its action "
             "with high confidence unless you can see a reason not to.",
             "",
             "EVERY DEVICE CALL",
-            "confidence: 0.8-1.0 when the frames plainly show it, 0.5-0.7 when a comfort cue is likely, "
-            "lower when you are guessing. Do not raise confidence for a physical event the frames do not show.",
+            "confidence: 0.8-1.0 when the frames plainly show it, when the frames and the sound agree, "
+            "when they clearly asked, or for a doorbell, knock, or alarm. "
+            "0.3 or lower when you only heard it, or the video is unclear. "
+            "Do not propose an action for a physical event at that level.",
             "reason: one short evidence line, e.g. 'frames show hands meeting; sound agrees; not a fall'.",
-            "ANSWER ONCE",
-            "Put every tool for this moment in this one response. There is no follow-up round.",
+            "LOOK, THEN ACT",
+            "If you need to look, find, or read before you act, call that tool first. "
+            "You get the result back, and you can then call a device tool.",
             "Summarize what you noticed in the reason fields. Do not write a long chain of thought into a tool.",
             "Confidence below 0.7 is uncertain: the app asks and does not act. "
             "Confidence of 0.7 or more is certain enough for one plan.",

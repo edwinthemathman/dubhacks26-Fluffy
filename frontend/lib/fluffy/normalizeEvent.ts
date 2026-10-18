@@ -662,7 +662,7 @@ function parseLegacy(record: Record<string, unknown>, now: number): HomePatch | 
     }
   }
   if ("speaker" in record) {
-    const speaker = readSpeaker(record.speaker, false);
+    const speaker = readSpeaker(record.speaker, true);
     if (speaker === "invalid") return null;
     if (speaker) patch.speaker = speaker;
   }

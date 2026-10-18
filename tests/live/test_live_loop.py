@@ -675,8 +675,9 @@ def test_a_clap_is_not_an_impact():
     )
     assert clap.sounds == ["clap"]
     named = _clap_not_impact(SceneState(sounds=["impact", "speech"], said="that was a clap"))
-    assert "impact" not in named.sounds
-    assert "clap" in named.sounds
+    assert named.sounds == ["impact", "speech"]
+    quiet_hands = _clap_not_impact(SceneState(sounds=["none"], people=[PersonState(gesture="clapping")]))
+    assert quiet_hands.sounds == ["none"]
 
 
 def test_clapping_plays_the_song_without_asking():
@@ -698,19 +699,46 @@ def test_clapping_plays_the_song_without_asking():
     assert played == ["go", "go"]
 
 
-def test_a_seen_clap_plays_the_song():
+def test_a_seen_clap_without_a_sound_does_not_play():
     async def run():
         played, on_clap = _clap_player()
-        loop, fake, clock, events = make(on_clap=on_clap)
+        loop, fake, clock, _events = make(on_clap=on_clap)
         fake.scene = SceneState(
             people=[PersonState(gesture="clapping", posture="standing")],
             summary="they clap",
         )
         feed_frames(loop, clock)
         await settle(loop)
+        assert played == []
+
+    asyncio.run(run())
+
+
+def test_a_heard_clap_without_the_hands_does_not_start_the_song():
+    async def run():
+        played, on_clap = _clap_player()
+        loop, fake, _, events = make(on_clap=on_clap)
+        fake.sound = SoundRead(sounds=["clap"], heard="a clap")
+        loop.scene = SceneState(summary="nobody in view")
+        await loop._hear_span(0, 1, loop.epoch)
+        assert played == []
+        assert any(event.get("note") == "unidentified sound, no action" for event in events)
+        assert not any(event.get("type") == "turn.start" for event in events)
+
+    asyncio.run(run())
+
+
+def test_a_seen_and_heard_clap_starts_the_song_once():
+    async def run():
+        played, on_clap = _clap_player()
+        loop, fake, clock, events = make(on_clap=on_clap)
+        scene = SceneState(people=[PersonState(gesture="clapping", posture="standing")], sounds=["clap"])
+        loop.scene = scene
+        loop.scene_log.append((clock.now(), scene))
+        fake.sound = SoundRead(sounds=["clap"], heard="clapping")
+        await loop._hear_span(0, 1, loop.epoch)
         assert played == ["go"]
-        assert any(event.get("tool") == "spotify_play" for event in events)
-        await settle(loop)
+        await loop._hear_span(0, 1, loop.epoch)
         assert played == ["go"]
 
     asyncio.run(run())
@@ -748,6 +776,30 @@ def test_a_stop_cue_pauses_once_and_does_not_ask():
     assert not any(event["type"] == "ask" for event in events)
     loop._on_cues({"stop_music"}, trigger="stop")
     assert paused == ["pause"]
+
+
+def test_a_weak_score_from_a_silent_person_is_ignored():
+    async def run():
+        loop, _, _, events = make()
+        loop.scene = SceneState(people=[PersonState(speaking="no", posture="sitting")])
+        await loop._heard_speech("dim the lights", confidence=0.2)
+        assert any(event.get("note") == "ignored: probably TV" for event in events)
+        assert not any(event.get("text") == "dim the lights" for event in events)
+
+    asyncio.run(run())
+
+
+def test_a_missing_or_zero_confidence_is_kept():
+    async def run():
+        loop, _, _, events = make()
+        loop.scene = SceneState(people=[PersonState(speaking="no", posture="sitting")])
+        await loop._heard_speech("hello there", confidence=0)
+        await loop._heard_speech("and again", confidence=None)
+        heard = [event.get("text") for event in events if event["type"] == "sense.hear"]
+        assert "hello there" in heard
+        assert "and again" in heard
+
+    asyncio.run(run())
 
 
 def test_saying_stop_pauses_the_song():

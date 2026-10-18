@@ -25,8 +25,10 @@ from fluffy.demo.analyze import (
     SOUND_PROMPT,
     scene_prompt,
     tag_prompt,
+    _meta_result,
     _parse_model,
     _safe_error,
+    _scene_text,
     _thinking,
     _usage,
     _user_text,
@@ -38,6 +40,7 @@ from fluffy.perception.scene import SceneState, SoundRead, TagRead, TranscriptRe
 from fluffy.profile.model import Profile
 
 LIVE_TIMEOUT_S = 30
+LIVE_DECIDE_ROUNDS = 2
 _VISUAL_ONLY_TOOLS = {"describe_scene", "find_object", "read_text", "look"}
 
 LIVE_NOTE = (
@@ -363,8 +366,7 @@ async def decide(
     now: Any = None,
     evidence_mode: str = "",
 ) -> Decision:
-    """One decision call. Device tools in that response are the whole plan."""
-    del memory, now
+    """Up to two calls. A look or a find can come back before the device tools."""
     started = time.perf_counter()
     mode = evidence_mode or "video"
     picture = window
@@ -389,7 +391,17 @@ async def decide(
         {"role": "system", "content": system_prompt(profile)},
         {"role": "user", "content": [*picture.media(with_audio=picture.wav is not None), {"type": "text", "text": user_text}]},
     ]
-    result = await _once(client, messages, perceptron_tools(), effort, max_tokens)
+    result = await _once(
+        client,
+        messages,
+        perceptron_tools(),
+        effort,
+        max_tokens,
+        rounds=LIVE_DECIDE_ROUNDS,
+        scene_text=_scene_text(scene),
+        memory=memory,
+        now=now,
+    )
     result.ms = _ms(started)
     return result
 
@@ -424,46 +436,75 @@ async def decide_text(
     return result
 
 
-async def _once(client: AsyncClient, messages: list[Any], tools: list[dict], effort: str, max_tokens: int) -> Decision:
-    """A single completion. Meta tools do not open another round."""
+async def _once(
+    client: AsyncClient,
+    messages: list[Any],
+    tools: list[dict],
+    effort: str,
+    max_tokens: int,
+    *,
+    rounds: int = 1,
+    scene_text: str = "",
+    memory: Any = None,
+    now: Any = None,
+) -> Decision:
+    """One completion, then a second when the first call only looked something up."""
 
     started = time.perf_counter()
     result = Decision()
-    try:
-        completion = await client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=tools,
-            parallel_tool_calls=True,
-            reasoning_effort=effort,
-            max_completion_tokens=max_tokens,
-            timeout=LIVE_TIMEOUT_S,
+    for round_index in range(rounds):
+        try:
+            completion = await client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                tools=tools,
+                parallel_tool_calls=True,
+                reasoning_effort=effort,
+                max_completion_tokens=max_tokens,
+                timeout=LIVE_TIMEOUT_S,
+            )
+        except SDKError as exc:
+            result.error = _safe_error(exc)
+            return result
+        result.rounds = round_index + 1
+        result.usage = _usage(completion) or result.usage
+        result.reply = (completion.text or "").strip() or result.reply
+        result.thinking = _remember_thinking(result.thinking, getattr(completion, "reasoning", None))
+        meta, device, bad = _split(
+            [
+                ToolCall(id=call.id, name=call.name, arguments=call.arguments or "")
+                for call in (completion.tool_calls or [])
+            ]
         )
-    except SDKError as exc:
-        result.error = _safe_error(exc)
-        return result
-    result.rounds = 1
-    result.usage = _usage(completion) or result.usage
-    result.reply = (completion.text or "").strip()
-    result.thinking = _remember_thinking(None, getattr(completion, "reasoning", None))
-    meta, device, bad = _split(
-        [
-            ToolCall(id=call.id, name=call.name, arguments=call.arguments or "")
-            for call in (completion.tool_calls or [])
-        ]
-    )
-    result.rejected.extend(bad)
-    asked_now = _asked(meta)
-    if asked_now:
-        result.asked = asked_now
-        result.choices = _asked_choices(meta)
-    result.meta = [call for _, call in meta if call.name not in {"ask_user", "confirm_plan"}]
-    result.device = device
-    if device:
-        result.confidence = min(call.confidence for call in device)
-    calls = [{"name": call.name, "args": call.args, "kept": True} for call in [*result.meta, *device]]
-    calls.extend({"name": item, "args": {}, "kept": False, "why": "rejected"} for item in bad)
-    _log_call("decide", None, completion.text, {}, calls, _ms(started))
+        result.rejected.extend(bad)
+        asked_now = _asked(meta)
+        if asked_now:
+            result.asked = asked_now
+            result.choices = _asked_choices(meta)
+        kept = [call for _, call in meta if call.name not in {"ask_user", "confirm_plan"}]
+        if kept:
+            result.meta = kept
+        if device:
+            result.device = device
+            result.meta = []
+            result.confidence = min(call.confidence for call in device)
+        calls = [{"name": call.name, "args": call.args, "kept": True} for call in [*kept, *device]]
+        calls.extend({"name": item, "args": {}, "kept": False, "why": "rejected"} for item in bad)
+        _log_call("decide", None, completion.text, {}, calls, _ms(started))
+        if device or not meta or round_index == rounds - 1:
+            break
+        message = getattr(completion, "message", None)
+        if message is None:
+            break
+        messages.append(message)
+        for call_id, parsed in meta:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": _meta_result(parsed.name, parsed.args, scene_text, memory, now),
+                }
+            )
     return result
 
 

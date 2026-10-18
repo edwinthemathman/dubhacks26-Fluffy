@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -99,7 +100,11 @@ def build_text_interpreter(settings: RuntimeSettings, client=None) -> TextInterp
         from perceptron import AsyncClient
 
         client = AsyncClient(api_key=key, provider="perceptron")
-    profile = load_profile(settings.root / "config" / "profiles" / "speech_cognitive.toml")
+    chosen = os.environ.get("FLUFFY_PROFILE", "elderly")
+    path = settings.root / "config" / "profiles" / f"{chosen}.toml"
+    if not path.exists():
+        path = settings.root / "config" / "profiles" / "elderly.toml"
+    profile = load_profile(path)
     return PerceptronTextInterpreter(client, profile)
 
 

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
-from fluffy.brain.cues import NOTIFY_SOUNDS, derive, volume_request, wants_music_stop
+from fluffy.brain.cues import NOTIFY_SOUNDS, cap_confidence, derive, unidentified_sound, volume_request, wants_music_stop
 from fluffy.brain.decide import _plan_from_devices, complete_paired_request
 from fluffy.brain.instincts import Guess, Instincts
 from fluffy.brain.objects import ObjectNotice, important_for, object_notices, tag_lines, wants_room_scan
@@ -1165,15 +1165,16 @@ class LiveLoop:
         kind = "distress_call" if trigger in {"call for help", "pain", "asked for help"} else "possible_fall"
         self._safety_effects(self.safety.on_event(kind, strength=self.help.strength or "strong"), trigger=trigger)
 
-    def _words_are_theirs(self, confidence: float) -> bool:
-        """A quiet or off-screen phrase is not a command. No score means we cannot tell."""
-        if confidence >= 0.8:
+    def _words_are_theirs(self, confidence: float | None) -> bool:
+        """Drop a phrase only when it is a weak score and a visible person is not speaking.
+
+        A missing score, or a zero, means Chrome did not measure it. Those phrases stay.
+        """
+        if confidence is None or confidence == 0 or confidence >= 0.5:
             return True
         if self.scene is None or not self.scene.people:
-            return confidence >= 0.5
-        if any(person.speaking != "no" for person in self.scene.people):
-            return confidence >= 0.5
-        return False
+            return True
+        return not all(person.speaking == "no" for person in self.scene.people)
 
     def _person_speaking(self) -> bool:
         if self.scene is None or not self.scene.people:
@@ -1365,11 +1366,13 @@ class LiveLoop:
                 outcome = self.help.observe(HelpSignal("distress", "supporting", "vision", self.now()))
             self._start_help(outcome, trigger="pain")
         heard_scene = apply_sound_read(self.scene, sound)
-        cues = self._scene_cues(heard_scene, set()) if heard_scene is not None else set()
-        if "clap" in labels:
-            cues.add("clapping")
-        before = dict(self.latched)
-        self._on_cues(cues, trigger=sound.heard or ", ".join(sorted(labels)), wav=wav)
+        if unidentified_sound(heard_scene):
+            self.emit({"type": "think", "note": "unidentified sound, no action"})
+        else:
+            cues = self._scene_cues(heard_scene, set()) if heard_scene is not None else set()
+            if "clap" in labels and self._clap_visible():
+                cues.add("clapping")
+            self._on_cues(cues, trigger=sound.heard or ", ".join(sorted(labels)), wav=wav)
         if "speech" not in labels or self._recent_speech():
             return
         # Chrome already supplied the words. This call is the fallback.
@@ -1399,7 +1402,9 @@ class LiveLoop:
         text = text.strip()
         if not text:
             return
-        if isinstance(confidence, (int, float)) and not self._words_are_theirs(float(confidence)):
+        scored = float(confidence) if isinstance(confidence, (int, float)) else None
+        if not self._words_are_theirs(scored):
+            self.emit({"type": "think", "note": "ignored: probably TV"})
             return
         self.speech_at = self.now()
         self.timings.speech_to_tool_ms = None
@@ -1679,6 +1684,7 @@ class LiveLoop:
             ids=self.ids,
         )
         plan = complete_paired_request(plan, request.utterance or "")
+        plan = cap_confidence(plan, set(request.cues) | derive(self.scene), self.scene)
         reasons = {call.name: call.reason for call in result.device}
         # Falls belong to the safety check-in ("Are you okay?", then the caregiver),
         # not to a second consent question. A model call to alert_caregiver starts
@@ -2059,10 +2065,22 @@ class LiveLoop:
             return
         heard = read.value.model_copy(update={"sounds": labels, "heard": ""})
         scene = apply_sound_read(self.scene, heard) if self.scene is not None else None
+        if unidentified_sound(scene):
+            self.emit({"type": "think", "note": "unidentified sound, no action"})
+            return
         cues = self._scene_cues(scene, set()) if scene is not None else set()
-        if "clap" in labels:
+        if "clap" in labels and self._clap_visible():
             cues.add("clapping")
         self._on_cues(cues, trigger=", ".join(labels))
+
+    def _clap_visible(self) -> bool:
+        """A clap counts only when the latest scene, still fresh, shows the hands."""
+        if not self.scene_log:
+            return False
+        at, scene = self.scene_log[-1]
+        if (self.clock.now() - at).total_seconds() > self.s.watch_span_s:
+            return False
+        return any(person.gesture == "clapping" for person in scene.people)
 
     def _handoff_plan(self, plan: Plan, turn: OpenTurn) -> None:
         for action in plan.actions:
@@ -2137,10 +2155,10 @@ _CUE_LABEL = {"entered_room": "walked in", "left_room": "left"}
 
 
 def _clap_not_impact(scene: SceneState) -> SceneState:
-    """A clap the camera calls a thud is still a clap."""
-    text = " ".join([scene.summary, scene.said, *scene.timeline]).lower()
+    """Relabel a thud as a clap only when the hands are clapping and a sound was heard."""
     hands = any(person.gesture == "clapping" for person in scene.people)
-    if not hands and "clap" not in scene.sounds and "clap" not in text:
+    heard_sound = any(label != "none" for label in scene.sounds)
+    if not hands or not heard_sound:
         return scene
     sounds = [label for label in scene.sounds if label not in {"impact", "none"}]
     if "clap" not in sounds:
