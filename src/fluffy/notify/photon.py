@@ -1,36 +1,19 @@
-"""Send the fall text through Photon SMS.
+"""Send a text through Photon iMessage.
 
-A project key cannot text by itself. Photon needs the project id, the number
-Photon sends from, a user for the caregiver, a space that holds both, then
-the message. The space id is kept for the process so a later fall reuses it.
+A project key cannot text by itself. Photon needs the project id, then a
+shared iMessage line for the recipient. The line is assigned by Photon, so
+an SMS from-number is not required. The space id is kept so a later text
+reuses it.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import time
 import uuid
 from typing import Any
 
 import httpx
-
-# #region agent log
-def _dbg(hypothesis_id: str, location: str, message: str, data: dict[str, Any]) -> None:
-    try:
-        with open("/Users/edwinan/Desktop/dubhacks26/.cursor/debug-0f0361.log", "a") as handle:
-            handle.write(json.dumps({
-                "sessionId": "0f0361",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }) + "\n")
-    except OSError:
-        pass
-# #endregion
 
 log = logging.getLogger("fluffy.notify.photon")
 
@@ -66,7 +49,8 @@ class PhotonSms:
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key and self.project_id and self.from_number)
+        # A shared iMessage line is assigned by Photon. An SMS from-number is not required.
+        return bool(self.api_key and self.project_id)
 
     @classmethod
     def from_env(cls) -> PhotonSms:
@@ -77,10 +61,10 @@ class PhotonSms:
         )
 
     def send(self, text: str | None = None, to: str | None = None) -> None:
-        """Text one number. Defaults keep the fall alert exactly as it is."""
+        """Text one number over iMessage. Defaults keep the fall alert exactly as it is."""
         body = ALERT_TEXT if text is None else text
         handle = ALERT_TO if to is None else to
-        sender = self._user(self.from_number)
+        sender = self._user(self._line_for(handle))
         recipient = self._user(handle)
         space = self._space(sender, recipient, handle)
         self._post(
@@ -93,8 +77,19 @@ class PhotonSms:
             idempotent=True,
         )
 
+    def _line_for(self, handle: str) -> str:
+        """The iMessage line that talks to this person. A dedicated line can be set in PHOTON_FROM."""
+        if self.from_number:
+            return self.from_number
+        page = self._get("platforms/imessage/assignments")
+        for row in page.get("assignments") or []:
+            if row.get("handle") == handle and not row.get("releasedAt"):
+                return str(row["assignedPhoneNumber"])
+        created = self._post("platforms/imessage/assignments", {"handle": handle})
+        return str(created["assignedPhoneNumber"])
+
     def _user(self, handle: str) -> str:
-        body = self._post("users", {"platform": "sms", "handle": handle})
+        body = self._post("users", {"platform": "imessage", "handle": handle})
         return str(body["id"])
 
     def _space(self, sender: str, recipient: str, handle: str) -> str:
@@ -105,7 +100,7 @@ class PhotonSms:
             return self._space_id
         body = self._post(
             "spaces",
-            {"platform": "sms", "participantIds": [sender, recipient]},
+            {"platform": "imessage", "participantIds": [sender, recipient]},
             idempotent=True,
         )
         self._spaces[handle] = str(body["id"])
@@ -130,6 +125,19 @@ class PhotonSms:
             raise PhotonError(response.status_code, "response was not an object")
         return data
 
+    def _get(self, path: str) -> dict[str, Any]:
+        response = self._client.get(
+            f"{API_BASE}/v1/projects/{self.project_id}/{path}",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise PhotonError(response.status_code, response.text.replace("\n", " ")[:300])
+        data = response.json()
+        if not isinstance(data, dict):
+            raise PhotonError(response.status_code, "response was not an object")
+        return data
+
 
 def shared_sms() -> PhotonSms:
     global _shared
@@ -148,15 +156,6 @@ def notify_person(text: str, sms: PhotonSms | None = None) -> bool:
     """Text the person themselves. Quiet when PERSON_PHONE is unset."""
     number = os.environ.get("PERSON_PHONE", "").strip()
     sender = sms if sms is not None else shared_sms()
-    # #region agent log
-    _dbg("A", "photon.py:notify_person", "person text", {
-        "chars": len(text.strip()),
-        "hasPhone": bool(number),
-        "configured": sender.configured,
-        "hasProject": bool(sender.project_id),
-        "hasFrom": bool(sender.from_number),
-    })
-    # #endregion
     if not number or not text.strip():
         return False
     if not sender.configured:
@@ -164,14 +163,8 @@ def notify_person(text: str, sms: PhotonSms | None = None) -> bool:
     try:
         sender.send(text=text, to=number)
     except Exception as exc:
-        # #region agent log
-        _dbg("E", "photon.py:notify_person", "person text failed", {"error": str(exc)[:300]})
-        # #endregion
         log.warning("person text failed: %s", exc)
         return False
-    # #region agent log
-    _dbg("C", "photon.py:notify_person", "person text accepted", {"chars": len(text.strip())})
-    # #endregion
     return True
 
 
@@ -181,7 +174,7 @@ def notify_fall(sms: PhotonSms | None = None) -> bool:
     sender = sms or shared_sms()
     if not sender.configured:
         if not _logged_skip:
-            log.info("photon sms skipped: set PHOTON_API_KEY, PHOTON_PROJECT_ID, and PHOTON_FROM")
+            log.info("photon imessage skipped: set PHOTON_API_KEY and PHOTON_PROJECT_ID")
             _logged_skip = True
         return False
     try:

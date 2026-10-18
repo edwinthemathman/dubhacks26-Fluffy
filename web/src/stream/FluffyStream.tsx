@@ -152,7 +152,11 @@ export function FluffyStreamProvider({ children }: { children: ReactNode }) {
       setSnapshot((current) => applyLocal(current, message));
       return;
     }
-    wsRef.current?.send(JSON.stringify(message));
+    const socket = wsRef.current;
+    // #region agent log
+    fetch("http://127.0.0.1:7643/ingest/889f4935-7c87-40ef-88c8-e26de67696a8",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"9d207c"},body:JSON.stringify({sessionId:"9d207c",hypothesisId:"A",location:"FluffyStream.tsx:send",message:"client send",data:{type:message.type,scene:sceneRef.current,ready:socket?.readyState??-1,sent:Boolean(socket&&socket.readyState===WebSocket.OPEN)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    socket?.send(JSON.stringify(message));
   }, [setSearchParams]);
 
   const value = useMemo(() => ({ snapshot, scene, send, replay }), [snapshot, scene, send, replay]);

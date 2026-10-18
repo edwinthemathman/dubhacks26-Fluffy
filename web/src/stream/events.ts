@@ -80,6 +80,7 @@ export type ClientMessage =
   | { type: "answer"; plan_id?: string; choice: "yes" | "no" | "help"; by: "button" | "typing" | "voice"; text?: string }
   | { type: "profile.set"; profile: ProfileId }
   | { type: "room.reset" }
+  | { type: "volume.set"; volume: number }
   | { type: "room.scan" }
   | { type: "tts.start" }
   | { type: "tts.end" }

@@ -9,7 +9,17 @@ Activity = Literal["sleeping", "arriving", "leaving", "idle", "distressed", "fal
 # Sound backs up what is seen. It breaks ties between look-alike moments
 # (snoring versus speech), and pain or a thud can confirm a fall nobody names.
 SoundLabel = Literal[
-    "snoring", "door", "help", "pain", "impact", "doorbell", "knock", "alarm", "speech", "none"
+    "snoring",
+    "door",
+    "help",
+    "pain",
+    "impact",
+    "doorbell",
+    "knock",
+    "alarm",
+    "speech",
+    "clap",
+    "none",
 ]
 # Visible signs that someone is hurt. None of these need words.
 DistressSign = Literal[
@@ -32,7 +42,7 @@ class PersonState(BaseModel):
     location_surface: Literal["floor", "sofa", "bed", "unknown"] = "unknown"
     distress_signs: list[DistressSign] = Field(default_factory=list)
     eyes: Literal["open", "closed", "unknown"] = "unknown"
-    gesture: Literal["none", "pointing", "shielding_eyes", "waving"] = "none"
+    gesture: Literal["none", "pointing", "shielding_eyes", "waving", "clapping", "stop"] = "none"
     attention_target: str | None = None
     searching: bool = False
     looking_for: str | None = None
@@ -40,10 +50,18 @@ class PersonState(BaseModel):
 
 class ObjectSighting(BaseModel):
     name: str
-    location_desc: str
-    with_person: bool = False
-    on_floor: bool = False
-    near_person: bool = False
+    location_desc: str = Field(
+        description=(
+            "Where this object is at the END of the clip, after any move. "
+            "A phone set down on the table is 'on the table', not 'in their hand'."
+        )
+    )
+    with_person: bool = Field(
+        default=False,
+        description="True only if it is still in a hand, pocket, bag, or worn at the end. False once they set it down.",
+    )
+    on_floor: bool = Field(default=False, description="True if it is on the floor at the end.")
+    near_person: bool = Field(default=False, description="True if it is within arm's reach at the end.")
 
 
 class TagRead(BaseModel):

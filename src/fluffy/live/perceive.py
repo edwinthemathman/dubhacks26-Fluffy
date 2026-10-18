@@ -195,16 +195,22 @@ async def read_sound(client: AsyncClient, wav: bytes) -> Read:
     except SDKError as exc:
         return Read(error=_safe_error(exc), ms=_ms(started))
     sound, error = _parse_model(completion.text, SoundRead, "Sound read")
-    if sound is not None and not [s for s in sound.sounds if s != "none"]:
-        # The model often describes the sound ("a doorbell rings") but leaves the
-        # label list empty. Fall back to the words it used.
+    if sound is not None:
         guessed = labels_from_text(sound.heard)
-        if guessed:
-            sound = sound.model_copy(update={"sounds": guessed})
+        labeled = [s for s in sound.sounds if s != "none"]
+        if not labeled and guessed:
+            labeled = guessed
+        if "clap" in guessed or "clap" in labeled:
+            labeled = [s for s in labeled if s != "impact"]
+            if "clap" not in labeled:
+                labeled.append("clap")
+        if labeled != [s for s in sound.sounds if s != "none"]:
+            sound = sound.model_copy(update={"sounds": labeled or ["none"]})
     return Read(value=sound, error=error, ms=_ms(started), usage=_usage(completion))
 
 
 _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("clap", ("clap",)),
     ("help", ("help", "i fell", "can't get up", "cannot get up")),
     ("pain", ("groan", "moan", "cry", "cries", "crying", "yelp", "whimper", "ouch", " ow", "gasp", "pain")),
     ("impact", ("thud", "crash", "bang", "thump", "slam", "fall", "falls", "fell", "hits the floor")),
@@ -246,6 +252,8 @@ def labels_from_text(text: str) -> list[str]:
         found.remove("help")
     if "doorbell" in found and "door" in found:
         found.remove("door")
+    if "clap" in found and "impact" in found:
+        found.remove("impact")
     return found
 
 

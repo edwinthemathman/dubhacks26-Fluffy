@@ -105,7 +105,7 @@ def dim(level: int) -> tuple[str, str]:
     )
 
 
-def make(profile: str = "blind", habits=None, **settings):
+def make(profile: str = "blind", habits=None, on_clap=None, on_volume=None, on_pause=None, **settings):
     clock = FrozenClock()
     fake = FakePerceiver()
     events: list[dict] = []
@@ -117,6 +117,9 @@ def make(profile: str = "blind", habits=None, **settings):
         emit=events.append,
         settings=LiveSettings(**settings),
         habits=habits,
+        on_clap=on_clap,
+        on_volume=on_volume,
+        on_pause=on_pause,
     )
     return loop, fake, clock, events
 
@@ -596,6 +599,139 @@ def test_sound_labels_fall_back_to_the_description():
     assert labels_from_text("a loud thud, then someone groans") == ["pain", "impact"]
     assert labels_from_text("someone says help me find my keys") == ["speech"]
     assert labels_from_text("quiet room tone") == []
+    assert labels_from_text("two sharp claps") == ["clap"]
+    assert labels_from_text("hands clapping, a loud bang") == ["clap"]
     assert labels_from_text("they are falling asleep") == []
     assert labels_from_text("that was helpful") == []
     assert labels_from_text("he fell") == ["impact"]
+
+
+def _clap_player():
+    played: list[str] = []
+
+    def on_clap() -> dict:
+        played.append("go")
+        return {
+            "ok": True,
+            "track": "Should I Stay or Should I Go - Remastered",
+            "artist": "The Clash",
+            "device": "Kelton's MacBook Pro",
+        }
+
+    return played, on_clap
+
+
+def test_a_clap_is_not_an_impact():
+    from fluffy.live.loop import _clap_not_impact
+
+    thud = _clap_not_impact(SceneState(sounds=["impact"], summary="a ball hits the floor"))
+    assert thud.sounds == ["impact"]
+    clap = _clap_not_impact(
+        SceneState(
+            sounds=["impact"],
+            people=[PersonState(gesture="clapping")],
+            summary="they clap",
+        )
+    )
+    assert clap.sounds == ["clap"]
+    named = _clap_not_impact(SceneState(sounds=["impact", "speech"], said="that was a clap"))
+    assert "impact" not in named.sounds
+    assert "clap" in named.sounds
+
+
+def test_clapping_plays_the_song_without_asking():
+    played, on_clap = _clap_player()
+    loop, _, clock, events = make(on_clap=on_clap)
+    loop._on_cues({"clapping"}, trigger="clapping")
+    assert played == ["go"]
+    call = next(event for event in events if event["type"] == "tool.call")
+    assert call["tool"] == "spotify_play"
+    assert "Should I Stay" in call["args"]["track"]
+    assert not any(event["type"] == "ask" for event in events)
+    loop._on_cues({"clapping"}, trigger="clapping")
+    assert played == ["go"]
+    clock.advance(30)
+    loop._on_cues({"clapping"}, trigger="clapping")
+    assert played == ["go"]
+    loop.reset()
+    loop._on_cues({"clapping"}, trigger="clapping")
+    assert played == ["go"]
+
+
+def test_a_seen_clap_plays_the_song():
+    async def run():
+        played, on_clap = _clap_player()
+        loop, fake, clock, events = make(on_clap=on_clap)
+        fake.scene = SceneState(
+            people=[PersonState(gesture="clapping", posture="standing")],
+            summary="they clap",
+        )
+        feed_frames(loop, clock)
+        await settle(loop)
+        assert played == ["go"]
+        assert any(event.get("tool") == "spotify_play" for event in events)
+        await settle(loop)
+        assert played == ["go"]
+
+    asyncio.run(run())
+
+
+def test_volume_control_sets_spotify_volume():
+    seen: list[int] = []
+
+    def on_volume(level: int) -> dict:
+        seen.append(level)
+        return {"ok": True, "volume": level}
+
+    loop, _, _, events = make(on_volume=on_volume)
+    asyncio.run(loop.on_client({"type": "volume.set", "volume": 35}))
+    assert seen == [35]
+    assert loop.home.state["speaker"]["volume"] == 35
+    assert events[-1]["speaker"]["volume"] == 35
+    loop._apply("play_sound", {"sound": "music", "room": "living_room", "volume": 20}, None)
+    assert seen == [35, 20]
+
+
+def test_a_stop_cue_pauses_once_and_does_not_ask():
+    paused: list[str] = []
+
+    def on_pause() -> dict:
+        paused.append("pause")
+        return {"ok": True}
+
+    loop, _, _, events = make(on_pause=on_pause)
+    loop.home.apply("play_sound", {"sound": "Should I Stay or Should I Go - Remastered", "volume": 40})
+    loop._on_cues({"stop_music"}, trigger="stop")
+    assert paused == ["pause"]
+    assert loop.home.state["speaker"]["sound"] is None
+    assert any(event.get("tool") == "spotify_pause" for event in events)
+    assert not any(event["type"] == "ask" for event in events)
+    loop._on_cues({"stop_music"}, trigger="stop")
+    assert paused == ["pause"]
+
+
+def test_saying_stop_pauses_the_song():
+    async def run():
+        paused: list[str] = []
+        loop, fake, _, _ = make(on_pause=lambda: paused.append("pause") or {"ok": True})
+        loop.home.apply("play_sound", {"sound": "Should I Stay or Should I Go - Remastered", "volume": 40})
+        await loop._heard_speech("stop the music")
+        assert paused == ["pause"]
+        assert fake.decide_calls == []
+
+    asyncio.run(run())
+
+
+def test_saying_louder_changes_spotify_volume():
+    async def run():
+        seen: list[int] = []
+        loop, fake, _, _ = make(on_volume=lambda level: seen.append(level) or {"ok": True, "volume": level})
+        loop.home.state["speaker"]["volume"] = 40
+        await loop._heard_speech("turn the volume up")
+        assert seen == [60]
+        assert loop.home.state["speaker"]["volume"] == 60
+        await loop._heard_speech("volume 25")
+        assert seen == [60, 25]
+        assert fake.decide_calls == []
+
+    asyncio.run(run())

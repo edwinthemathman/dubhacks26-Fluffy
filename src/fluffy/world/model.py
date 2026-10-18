@@ -105,7 +105,13 @@ class ObjectMemory:
                     home_desc=place,
                 )
             else:
+                # A scan is a look at where things are now, so a move replaces the old spot.
                 tag.home_desc = place
+                tag.location_desc = place
+                tag.with_person = item.with_person
+                tag.on_floor = item.on_floor
+                tag.near_person = item.near_person
+                tag.last_seen_at = at
                 tag.name = item.name.strip() or tag.name
                 tag.unconfirmed = False
 
@@ -129,8 +135,7 @@ class ObjectMemory:
                     near_person=item.near_person,
                 )
                 continue
-            if place != tag.location_desc or item.with_person:
-                tag.location_desc = place
+            tag.location_desc = place
             tag.with_person = item.with_person
             tag.on_floor = item.on_floor
             tag.near_person = item.near_person
@@ -209,6 +214,7 @@ class WorldModel:
 
     def observe_scene(self, scene: SceneState) -> list[DerivedEvent]:
         now = self.clock.now()
+        scene = scene.model_copy(update={"objects_seen": objects_at_end(scene)})
         self.latest_scene = scene
         self.objects.note_live(scene.objects_seen, now)
 
@@ -379,6 +385,162 @@ def _fallback_summary(scene: SceneState) -> str:
 
 def _object_key(name: str) -> str:
     return " ".join(name.strip().lower().split())
+
+
+_OBJECT_NAMES = (
+    "hearing aids",
+    "pill organizer",
+    "pill box",
+    "phone",
+    "keys",
+    "wallet",
+    "glasses",
+    "cane",
+    "walker",
+    "remote",
+    "cup",
+    "bag",
+    "book",
+    "charger",
+    "pills",
+)
+_HELD_WORDS = ("hand", "hands", "holding", "held", "pocket", "pockets")
+
+
+def objects_at_end(scene: SceneState) -> list[ObjectSighting]:
+    """One tag per object, where it is after the clip, not where it started.
+
+    A phone in the hand and then on the table stays on the table.
+    """
+    chosen: dict[str, ObjectSighting] = {}
+    for item in scene.objects_seen:
+        key = _object_key(item.name)
+        if not key:
+            continue
+        chosen[key] = _end_of_sighting(item)
+    for key, moved in _moves(scene).items():
+        current = chosen.get(key)
+        if not moved.with_person and (current is None or current.with_person or _held_place(current.location_desc)):
+            name = current.name if current is not None else moved.name
+            chosen[key] = moved.model_copy(update={"name": name})
+        elif moved.with_person and (current is None or not current.with_person):
+            name = current.name if current is not None else moved.name
+            chosen[key] = moved.model_copy(update={"name": name})
+    return list(chosen.values())
+
+
+def _end_of_sighting(item: ObjectSighting) -> ObjectSighting:
+    parts = re.split(r"\b(?:then|after that|and then)\b", item.location_desc, flags=re.IGNORECASE)
+    last = parts[-1].strip(" .")
+    if len(parts) < 2 or not last:
+        return item
+    held = _held_place(last)
+    return item.model_copy(
+        update={
+            "location_desc": last,
+            "with_person": held,
+            "on_floor": "floor" in last.lower() or "ground" in last.lower(),
+        }
+    )
+
+
+def _moves(scene: SceneState) -> dict[str, ObjectSighting]:
+    names = list(_OBJECT_NAMES)
+    for item in scene.objects_seen:
+        key = _object_key(item.name)
+        if key and key not in names:
+            names.append(key)
+    names.sort(key=len, reverse=True)
+    if not names:
+        return {}
+    name_re = "|".join(re.escape(name) for name in names)
+    set_down = re.compile(
+        rf"\b(?:puts?|sets?|places?|placed|lays?|laid|leaves|left|drops?)\s+"
+        rf"(?:down\s+)?(?:the\s+|their\s+|a\s+|his\s+|her\s+)?({name_re})\s+"
+        rf"(?:down\s+)?(?:on|onto)\s+(?:the\s+|a\s+)?([a-z0-9][^.,;]{{0,40}})",
+        re.IGNORECASE,
+    )
+    pick_up = re.compile(
+        rf"\b(?:picks?\s+up|picked\s+up|grabs?|grabbed)\s+"
+        rf"(?:the\s+|their\s+|a\s+|his\s+|her\s+)?({name_re})\b",
+        re.IGNORECASE,
+    )
+    it_down = re.compile(
+        r"\b(?:puts?|sets?|places?|placed|lays?|laid|leaves|left|drops?)\s+"
+        r"(?:down\s+)?(?:it|them)\s+(?:down\s+)?(?:on|onto)\s+(?:the\s+|a\s+)?"
+        r"([a-z0-9][^.,;]{0,40})",
+        re.IGNORECASE,
+    )
+    pronoun = _pronoun_target(scene)
+    found: dict[str, ObjectSighting] = {}
+    for line in [*scene.timeline, scene.summary]:
+        hits: list[tuple[int, ObjectSighting]] = []
+        for match in set_down.finditer(line):
+            place = re.split(r"\b(?:and|then|while|before|after)\b", match.group(2), maxsplit=1)[0]
+            place = " ".join(place.split())
+            if not place:
+                continue
+            where = f"on the {place}"
+            hits.append(
+                (
+                    match.start(),
+                    ObjectSighting(
+                        name=match.group(1),
+                        location_desc=where,
+                        with_person=False,
+                        on_floor=place.lower().startswith(("floor", "ground")),
+                    ),
+                )
+            )
+        for match in pick_up.finditer(line):
+            hits.append(
+                (
+                    match.start(),
+                    ObjectSighting(
+                        name=match.group(1),
+                        location_desc="in their hand",
+                        with_person=True,
+                        near_person=True,
+                    ),
+                )
+            )
+        if pronoun:
+            for match in it_down.finditer(line):
+                place = re.split(r"\b(?:and|then|while|before|after)\b", match.group(1), maxsplit=1)[0]
+                place = " ".join(place.split())
+                if not place:
+                    continue
+                hits.append(
+                    (
+                        match.start(),
+                        ObjectSighting(
+                            name=pronoun,
+                            location_desc=f"on the {place}",
+                            with_person=False,
+                            on_floor=place.lower().startswith(("floor", "ground")),
+                        ),
+                    )
+                )
+        for _, sighting in sorted(hits, key=lambda item: item[0]):
+            found[_object_key(sighting.name)] = sighting
+    return found
+
+
+def _pronoun_target(scene: SceneState) -> str | None:
+    """'puts it on the table' means the one thing they were holding, or the only object."""
+    rows = [( _object_key(item.name), item) for item in scene.objects_seen]
+    rows = [(key, item) for key, item in rows if key]
+    if len(rows) == 1:
+        return rows[0][0]
+    held = [key for key, item in rows if item.with_person or _held_place(item.location_desc)]
+    if len(held) == 1:
+        return held[0]
+    return None
+
+
+def _held_place(text: str) -> bool:
+    lowered = text.lower()
+    return any(word in lowered for word in _HELD_WORDS)
 
 
 def _tokens(text: str) -> int:

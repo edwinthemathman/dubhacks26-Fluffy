@@ -21,13 +21,14 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
-from fluffy.brain.cues import NOTIFY_SOUNDS, derive
+from fluffy.brain.cues import NOTIFY_SOUNDS, derive, volume_request, wants_music_stop
 from fluffy.brain.decide import _plan_from_devices, complete_paired_request
 from fluffy.brain.objects import important_for, object_notices, tag_lines, wants_room_scan
 from fluffy.brain.habits import HabitBook, habit_note, habit_why
-from fluffy.brain.safety import CHECKIN_TEXT, SafetyEffect, SafetyMachine
+from fluffy.brain.safety import CHECKIN_TEXT, PAIN_TEXT_S, SafetyEffect, SafetyMachine
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
+from fluffy.integrations.spotify import pause_playback, play_clap_song, set_volume
 from fluffy.live.buffers import AudioBuffer, FrameBuffer, SpeechGate, pad_pcm, to_wav
 from fluffy.live.home import HomeState
 from fluffy.live.perceive import Decision, Read, Window
@@ -37,13 +38,39 @@ from fluffy.models import Action, Plan, Trigger
 from fluffy.notify.photon import notify_fall, notify_person
 from fluffy.perception.scene import SceneState, SoundRead, TagRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
-from fluffy.world.model import WorldModel
+from fluffy.world.model import WorldModel, objects_at_end
 
 log = logging.getLogger("fluffy.live")
+
+
+def _agent_log(hypothesis: str, location: str, message: str, data: dict[str, Any]) -> None:
+    # #region agent log
+    try:
+        import json
+        import time
+
+        with open("/Users/edwinan/Desktop/dubhacks26/.cursor/debug-9d207c.log", "a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "sessionId": "9d207c",
+                        "hypothesisId": hypothesis,
+                        "location": location,
+                        "message": message,
+                        "data": data,
+                        "timestamp": int(time.time() * 1000),
+                    }
+                )
+                + "\n"
+            )
+    except OSError:
+        pass
+    # #endregion
 
 Emit = Callable[[dict[str, Any]], None]
 
 SAFETY_UI = {"checkin": "checkin1", "checkin_repeat": "checkin2", "alerted": "alerted"}
+FALL_CLEAR_S = 15
 
 
 @dataclass
@@ -192,6 +219,9 @@ class LiveLoop:
         clock: Clock | None = None,
         emit: Emit | None = None,
         habits: HabitBook | None = None,
+        on_clap: Callable[[], dict[str, Any]] | None = None,
+        on_volume: Callable[[int], dict[str, Any]] | None = None,
+        on_pause: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.perceiver = perceiver
         self.profiles = profiles
@@ -238,11 +268,20 @@ class LiveLoop:
         self.last_said = ""
         self.speech_at = 0.0
         self.habits = habits or HabitBook()
+        self.on_clap = on_clap or play_clap_song
+        self.on_volume = on_volume or set_volume
+        self.on_pause = on_pause or pause_playback
+        self.clap_played = False
+        self.music_stopped = False
         self.presence = RoomPresence()
         self.room_change = ""
         self.says: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.timers: set[asyncio.Task] = set()
         self._help_text_sent = False
+        self._checkin_text_sent = False
+        self._pain_text_at: float | None = None
+        self._fall_absent_since: float | None = None
+        self._fall_was_here = False
 
     # ---------- inputs ----------
 
@@ -279,16 +318,21 @@ class LiveLoop:
             text = str(message.get("text", "")).strip()
             if "scan the room" in text.lower():
                 self.want_scan = True
-            if text and not await self._answer_text(text, by="typing"):
+            if text and not await self._answer_text(text, by="typing") and not self._spoken_volume(text):
                 self._request(DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text))
         elif kind == "room.scan":
             self.want_scan = True
+            # #region agent log
+            _agent_log("E", "loop.py:room.scan", "scan requested", {"frames": len(self.frames.frames), "paused": self.paused})
+            # #endregion
         elif kind == "speech":
             await self._heard_speech(str(message.get("text", "")))
         elif kind == "profile.set" and message.get("profile") in self.profiles:
             self.profile = self.profiles[message["profile"]]
             self.safety.profile = self.profile
             self.emit({"type": "profile", "profile": self.profile.id, "needs": list(self.profile.needs)})
+        elif kind == "volume.set":
+            self._set_speaker_volume(message.get("volume"))
         elif kind == "room.reset":
             self.reset()
         elif kind == "caregiver.ack":
@@ -319,6 +363,7 @@ class LiveLoop:
         self.open_turn = None
         self.safety_turn = None
         self.latched.clear()
+        self.music_stopped = False
         self.active_cues.clear()
         self.glare_since = None
         self.glare_quiet_until = None
@@ -330,6 +375,11 @@ class LiveLoop:
         self.world = WorldModel(self.clock, self.ids)
         self.notice_fired.clear()
         self.texted_left.clear()
+        self._help_text_sent = False
+        self._checkin_text_sent = False
+        self._pain_text_at = None
+        self._fall_absent_since = None
+        self._fall_was_here = False
         self.want_scan = False
         self.scanned_empty = False
         self.emit({"type": "safety", "state": "ok"})
@@ -354,6 +404,14 @@ class LiveLoop:
 
     async def tick(self) -> None:
         self._safety_effects(self.safety.tick())
+        self._release_ended_fall()
+        if (
+            self._pain_text_at is not None
+            and self.now() >= self._pain_text_at
+            and self.safety.phase in {"checkin", "checkin_repeat"}
+        ):
+            self._pain_text_at = None
+            self._text_checkin(CHECKIN_TEXT)
         was_unprompted = bool(self.consent.open and self.consent.open.unprompted)
         update = self.consent.tick()
         if update is not None:
@@ -379,6 +437,9 @@ class LiveLoop:
             and self._budget()
         ):
             self.want_scan = False
+            # #region agent log
+            _agent_log("E", "loop.py:tick", "scan starting", {"frames": len(self.frames.frames)})
+            # #endregion
             self._start("scan", self._scan())
         if self.pending is not None and self._idle("decide"):
             request, self.pending = self.pending, None
@@ -454,10 +515,12 @@ class LiveLoop:
             log.warning("scene read failed: %s", read.error)
             return
         scene: SceneState = read.value
+        scene = scene.model_copy(update={"objects_seen": objects_at_end(scene)})
         if window.wav is None or self.audio.loudest(self.s.watch_span_s) < self.s.audible_floor:
             # The window was silent, so any sound label or quote is a guess from the picture
             # (a bouncing ball read as a thud). Real sounds come from the mic.
             scene = scene.model_copy(update={"sounds": ["none"], "said": ""})
+        scene = _clap_not_impact(scene)
         self.scene = scene
         presence = self.presence.observe(scene, self.now(), self.profile.agreements.person_name)
         self.room_change = presence.room_change
@@ -604,9 +667,15 @@ class LiveLoop:
             return
         if window is None:
             self.want_scan = True
+            # #region agent log
+            _agent_log("E", "loop.py:_scan", "scan waiting for frames", {"frames": len(self.frames.frames)})
+            # #endregion
             return
         read = await self.perceiver.read_tags(window, profile=self.profile)
         if not self._live(epoch) or read.error or not isinstance(read.value, TagRead):
+            # #region agent log
+            _agent_log("E", "loop.py:_scan", "scan read failed", {"error": read.error, "paused": self.paused, "kind": type(read.value).__name__ if read.value is not None else None})
+            # #endregion
             return
         self.world.objects.note_scan(read.value.objects, self.clock.now())
         scene = self.scene or SceneState()
@@ -649,6 +718,20 @@ class LiveLoop:
 
     def _on_cues(self, cues: set[str], *, trigger: str, wav: bytes | None = None) -> None:
         now = self.now()
+        # The first clap starts the song. It is never started again.
+        playing = self._music_on()
+        if "clapping" in cues and not self.clap_played:
+            self.clap_played = True
+            self._play_claps()
+        if (
+            "stop_music" in cues
+            and playing
+            and not self.music_stopped
+            and now - self.latched.get("stop_music", -1e9) > 30
+        ):
+            self.latched["stop_music"] = now
+            self._stop_music()
+        cues = set(cues) - {"clapping", "stop_music"}
         fresh = {c for c in cues if now - self.latched.get(c, -1e9) > self.s.latch_s}
         if not fresh:
             return
@@ -675,6 +758,115 @@ class LiveLoop:
                 room_change=self.room_change,
             )
         )
+
+    def _play_claps(self) -> None:
+        """A seen or heard clap starts the same song, without asking."""
+        started = self.now()
+        turn_id = self.ids("turn")
+        self.emit({"type": "turn.start", "turn_id": turn_id, "kind": "sound", "trigger": "clapping"})
+        self.emit({"type": "think", "turn_id": turn_id, "note": "clapping, playing the song"})
+        try:
+            result = self.on_clap()
+        except Exception as exc:
+            log.warning("clap song failed: %s", exc)
+            result = {"ok": False, "error": "could not reach Spotify"}
+        track = str(result.get("track") or "Should I Stay or Should I Go - Remastered")
+        artist = str(result.get("artist") or "The Clash")
+        turn = OpenTurn(turn_id)
+        action = Action(
+            action_id=self.ids("act"),
+            tool="spotify_play",
+            args={"track": track, "artist": artist, "query": f"{track} {artist}"},
+        )
+        call_id = self._tool_call(turn, action, "clapping")
+        if result.get("ok"):
+            heard_volume = result.get("volume")
+            volume = heard_volume if isinstance(heard_volume, int) else self.home.state["speaker"]["volume"]
+            state = self.home.apply("play_sound", {"sound": track, "room": "living_room", "volume": volume})
+            if state is not None:
+                self.emit(state)
+            where = result.get("device") or "Spotify"
+            self.emit({"type": "tool.status", "call_id": call_id, "status": "done"})
+            self._end(turn_id, started, "acted", note=f"playing {track} on {where}")
+            return
+        self.emit({"type": "tool.status", "call_id": call_id, "status": "rejected", "detail": result.get("error") or "could not play"})
+        self._end(turn_id, started, "nothing", note=str(result.get("error") or "could not play the song"))
+
+    def _set_speaker_volume(self, raw: Any) -> None:
+        try:
+            level = int(raw)
+        except (TypeError, ValueError):
+            return
+        level = max(0, min(100, level))
+        self.home.state["speaker"]["volume"] = level
+        self.emit({"type": "state", "speaker": dict(self.home.state["speaker"])})
+        self._spotify_volume(level)
+
+    def _spotify_volume(self, raw: Any) -> None:
+        try:
+            level = max(0, min(100, int(raw)))
+        except (TypeError, ValueError):
+            return
+        try:
+            result = self.on_volume(level)
+        except Exception as exc:
+            log.warning("spotify volume failed: %s", exc)
+            return
+        if not result.get("ok"):
+            log.warning("spotify volume: %s", result.get("error"))
+
+    def _spoken_volume(self, text: str) -> bool:
+        """Louder, quieter, or a number sets Spotify's volume without asking."""
+        request = volume_request(text)
+        if request is None:
+            return False
+        current = int(self.home.state["speaker"].get("volume") or 0)
+        op = request["op"]
+        if op == "mute":
+            level = 0
+        elif op == "set":
+            level = int(request["level"])
+        else:
+            if current <= 0:
+                current = 40
+            level = current + (20 if op == "up" else -20)
+        self._set_speaker_volume(max(0, min(100, level)))
+        return True
+
+    def _music_on(self) -> bool:
+        return bool(self.home.state["speaker"].get("sound"))
+
+    def _stop_music(self) -> None:
+        """A raised palm, or the words stop, pauses Spotify. It does not ask."""
+        started = self.now()
+        turn_id = self.ids("turn")
+        self.emit({"type": "turn.start", "turn_id": turn_id, "kind": "sound", "trigger": "stop"})
+        self.emit({"type": "think", "turn_id": turn_id, "note": "stopping the music"})
+        result = self._pause_spotify()
+        turn = OpenTurn(turn_id)
+        action = Action(action_id=self.ids("act"), tool="spotify_pause", args={})
+        call_id = self._tool_call(turn, action, "stop")
+        if result.get("ok"):
+            state = self.home.apply("stop_sound", {"room": "living_room"})
+            if state is not None:
+                self.emit(state)
+            self.emit({"type": "tool.status", "call_id": call_id, "status": "done"})
+            self._end(turn_id, started, "acted", note="music stopped")
+            return
+        self.emit({"type": "tool.status", "call_id": call_id, "status": "rejected", "detail": result.get("error") or "could not pause"})
+        self._end(turn_id, started, "nothing", note=str(result.get("error") or "could not stop the music"))
+
+    def _pause_spotify(self) -> dict[str, Any]:
+        try:
+            result = self.on_pause()
+        except Exception as exc:
+            log.warning("spotify pause failed: %s", exc)
+            return {"ok": False, "error": "could not reach Spotify"}
+        if result.get("ok"):
+            self.music_stopped = True
+        else:
+            log.warning("spotify pause: %s", result.get("error"))
+        return result
 
     # ---------- hear lane ----------
 
@@ -719,12 +911,20 @@ class LiveLoop:
             return
         sound: SoundRead = read.value
         labels = {label for label in sound.sounds if label != "none"}
-        notable = next((l for l in ("help", "alarm", "doorbell", "knock", "impact", "pain") if l in labels), None)
+        if "clap" in labels or "clap" in (sound.heard or "").lower():
+            labels.discard("impact")
+            labels.add("clap")
+            sound = sound.model_copy(update={"sounds": sorted(labels)})
+        notable = next((l for l in ("help", "alarm", "doorbell", "knock", "clap", "pain", "impact") if l in labels), None)
         self.emit({"type": "sense.hear", "text": sound.heard, "sound": notable})
         if "help" in labels:
             self._safety_effects(self.safety.on_event("distress_call"), trigger="call for help")
+        elif "pain" in labels:
+            self._safety_effects(self.safety.on_event("distress_call"), trigger="pain")
         heard_scene = apply_sound_read(self.scene, sound)
         cues = self._scene_cues(heard_scene, set()) if heard_scene is not None else set()
+        if "clap" in labels:
+            cues.add("clapping")
         before = dict(self.latched)
         self._on_cues(cues, trigger=sound.heard or ", ".join(sorted(labels)), wav=wav)
         if "speech" not in labels or self._recent_speech():
@@ -738,6 +938,8 @@ class LiveLoop:
             return
         utterance = text or sound.heard or "speech"
         self.last_said = utterance
+        if self._spoken_volume(utterance):
+            return
         self._request(
             DecideRequest(
                 "spoken",
@@ -760,6 +962,11 @@ class LiveLoop:
             self.want_scan = True
         self.emit({"type": "sense.hear", "text": text})
         if await self._answer_text(text, by="voice"):
+            return
+        if wants_music_stop(text) and self._music_on() and not self.music_stopped:
+            self._stop_music()
+            return
+        if self._spoken_volume(text):
             return
         self._request(DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text))
 
@@ -1036,6 +1243,12 @@ class LiveLoop:
 
     async def _answer(self, choice: str, *, by: str) -> None:
         choice = choice.lower()
+        if self.safety.phase == "alerted" and choice in {"yes", "okay", "ok"}:
+            if self.safety_turn:
+                self.emit({"type": "ask.answer", "turn_id": self.safety_turn, "by": by, "choice": "okay"})
+            self.policy.note_answered()
+            self._safety_effects(self.safety.on_answer("okay"))
+            return
         if self.safety.phase in {"checkin", "checkin_repeat"}:
             raw = "okay" if choice in {"yes", "okay", "ok"} else "help"
             if self.safety_turn:
@@ -1090,6 +1303,9 @@ class LiveLoop:
         if self._open_question() is None:
             return False
         words = text.lower().strip(" .!?")
+        if words in {"i'm okay", "im okay", "i am okay"} or words.startswith(("i'm okay", "im okay", "i am okay")):
+            await self._answer("okay", by=by)
+            return True
         for choice in ("help", "yes", "no", "okay", "ok"):
             if words == choice or words.startswith(choice + " "):
                 await self._answer(choice, by=by)
@@ -1117,6 +1333,10 @@ class LiveLoop:
         elif tool == "show_caption":
             text = args.get("text")
             self._later(self.s.caption_s, lambda: self.home.state["caption"] == text and self.emit(self.home.clear_caption()))
+        elif tool in {"play_sound", "spotify_play"} and args.get("volume") is not None:
+            self._spotify_volume(args.get("volume"))
+        elif tool in {"stop_sound", "spotify_pause", "stop_music"}:
+            self._pause_spotify()
         elif tool == "announce":
             self._say(turn_id, str(args.get("text", "")), voice=True)
         elif tool == "alert_caregiver":
@@ -1142,6 +1362,27 @@ class LiveLoop:
         self.timers.add(task)
         task.add_done_callback(self.timers.discard)
 
+    def _release_ended_fall(self) -> None:
+        """A fall that has left the picture ends the incident, so the next one can text."""
+        if self.safety.phase == "idle":
+            self._fall_absent_since = None
+            self._fall_was_here = False
+            return
+        if "fall" in self.active_cues:
+            self._fall_was_here = True
+            self._fall_absent_since = None
+            return
+        if not self._fall_was_here:
+            return
+        if self._fall_absent_since is None:
+            self._fall_absent_since = self.now()
+            return
+        if self.now() - self._fall_absent_since < FALL_CLEAR_S:
+            return
+        self._fall_absent_since = None
+        self._fall_was_here = False
+        self._safety_effects(self.safety.stand_down())
+
     def _safety_effects(self, effects: list[SafetyEffect], *, trigger: str = "safety") -> None:
         for effect in effects:
             if self.safety_turn is None:
@@ -1151,7 +1392,15 @@ class LiveLoop:
             if effect.kind == "checkin":
                 self.emit({"type": "safety", "state": SAFETY_UI.get(self.safety.phase, "checkin1")})
                 self.emit({"type": "ask", "turn_id": turn.turn_id, "question": effect.text, "choices": ["I'm okay", "Need help"]})
-                notify_person(effect.text)
+                if trigger == "pain":
+                    self._checkin_text_sent = False
+                    self._pain_text_at = self.now() + PAIN_TEXT_S
+                elif trigger != "safety":
+                    self._pain_text_at = None
+                    self._checkin_text_sent = False
+                    self._text_checkin(effect.text)
+                else:
+                    self._text_checkin(effect.text)
             for plan in effect.plans:
                 for action in plan.actions:
                     why = {"alert_caregiver": "no answer or asked for help"}.get(action.tool, "safety check-in")
@@ -1163,10 +1412,35 @@ class LiveLoop:
                 self._say(turn.turn_id, effect.text, voice=True)
             elif effect.kind == "cleared":
                 self._help_text_sent = False
+                self._checkin_text_sent = False
+                self._pain_text_at = None
                 self._say(turn.turn_id, effect.text, voice=True)
                 self.emit({"type": "turn.end", "turn_id": turn.turn_id, "ms": 0, "outcome": "nothing"})
                 self.emit({"type": "safety", "state": "ok"})
                 self.safety_turn = None
+
+    def _text_checkin(self, text: str) -> None:
+        """One check-in text per incident. The 60-second follow-ups stay in the room."""
+        # #region agent log
+        import json
+        import time
+        try:
+            with open("/Users/edwinan/Desktop/dubhacks26/.cursor/debug-0f0361.log", "a") as handle:
+                handle.write(json.dumps({
+                    "sessionId": "0f0361",
+                    "hypothesisId": "F",
+                    "location": "loop.py:_text_checkin",
+                    "message": "check-in text",
+                    "data": {"alreadySent": self._checkin_text_sent, "chars": len(text)},
+                    "timestamp": int(time.time() * 1000),
+                }) + "\n")
+        except OSError:
+            pass
+        # #endregion
+        if self._checkin_text_sent:
+            return
+        if notify_person(text):
+            self._checkin_text_sent = True
 
     def _text_help(self) -> None:
         """One SMS per incident. The later safety alert does not text again."""
@@ -1183,6 +1457,18 @@ class LiveLoop:
 
 
 _CUE_LABEL = {"entered_room": "walked in", "left_room": "left"}
+
+
+def _clap_not_impact(scene: SceneState) -> SceneState:
+    """A clap the camera calls a thud is still a clap."""
+    text = " ".join([scene.summary, scene.said, *scene.timeline]).lower()
+    hands = any(person.gesture == "clapping" for person in scene.people)
+    if not hands and "clap" not in scene.sounds and "clap" not in text:
+        return scene
+    sounds = [label for label in scene.sounds if label not in {"impact", "none"}]
+    if "clap" not in sounds:
+        sounds.append("clap")
+    return scene.model_copy(update={"sounds": sounds})
 
 
 def _brief(reason: str) -> str:

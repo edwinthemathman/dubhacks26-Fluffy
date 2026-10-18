@@ -26,6 +26,81 @@ DIM_MAX = 40
 ON_MIN = 60
 
 
+_VOLUME_UP = (
+    "louder",
+    "volume up",
+    "turn the volume up",
+    "turn the music up",
+    "turn it up",
+    "bit louder",
+    "too quiet",
+)
+_VOLUME_DOWN = (
+    "quieter",
+    "softer",
+    "volume down",
+    "turn the volume down",
+    "turn the music down",
+    "turn it down",
+    "bit quieter",
+    "too loud",
+)
+_VOLUME_NUMBER = (
+    "volume to ",
+    "volume at ",
+    "the volume to ",
+    "the volume at ",
+    "music to ",
+    "music at ",
+    "volume ",
+)
+
+
+def volume_request(text: str) -> dict[str, int | str] | None:
+    """A spoken volume change. Absolute levels win over up or down."""
+    lowered = " ".join(text.lower().replace("%", " ").split())
+    if lowered in {"mute", "mute it", "mute the music"}:
+        return {"op": "mute"}
+    number = _volume_number(lowered)
+    if number is not None:
+        return {"op": "set", "level": number}
+    up = any(phrase in lowered for phrase in _VOLUME_UP)
+    down = any(phrase in lowered for phrase in _VOLUME_DOWN)
+    if up and not down:
+        return {"op": "up"}
+    if down and not up:
+        return {"op": "down"}
+    return None
+
+
+def _volume_number(lowered: str) -> int | None:
+    for stem in _VOLUME_NUMBER:
+        at = lowered.find(stem)
+        if at < 0:
+            continue
+        rest = lowered[at + len(stem):].lstrip()
+        digits = ""
+        for char in rest:
+            if char.isdigit():
+                digits += char
+            else:
+                break
+        if digits:
+            return max(0, min(100, int(digits)))
+    return None
+
+
+def wants_music_stop(text: str) -> bool:
+    """True when the words are a request to stop the song, not a longer sentence that mentions stopping."""
+    lowered = text.lower().strip(" .!?")
+    if lowered in {"stop", "pause"}:
+        return True
+    return any(
+        phrase in lowered
+        for phrase in ("stop the music", "stop the song", "pause the music", "pause the song", "turn the music off")
+    )
+
+
 def heard(scene: SceneState | None) -> set[str]:
     if scene is None:
         return set()
@@ -47,6 +122,14 @@ def derive(scene: SceneState | None) -> set[str]:
             cues.add("fall")
         if person.gesture == "shielding_eyes":
             cues.add("glare")
+        if person.gesture == "clapping":
+            cues.add("clapping")
+        if person.gesture == "stop":
+            cues.add("stop_music")
+    if "clap" in sounds:
+        cues.add("clapping")
+    if wants_music_stop(scene.said):
+        cues.add("stop_music")
     if scene.lighting == "dark":
         cues.add("getting_dark")
     cues.update(sounds & NOTIFY_SOUNDS)

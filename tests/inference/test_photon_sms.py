@@ -48,8 +48,9 @@ def test_alert_caregiver_sends_the_fixed_text():
 
     assert notify_plan(plan, sms) is True
 
-    users = [call["json"]["handle"] for call in http.calls if call["url"].endswith("/users")]
-    assert ALERT_TO in users
+    users = [call for call in http.calls if call["url"].endswith("/users")]
+    assert ALERT_TO in [call["json"]["handle"] for call in users]
+    assert {call["json"]["platform"] for call in users} == {"imessage"}
     message = next(call for call in http.calls if call["url"].endswith("/messages"))
     assert message["json"]["content"] == {"type": "text", "format": "plain", "text": ALERT_TEXT}
     assert message["json"]["senderId"] == "sender"

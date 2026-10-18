@@ -10,3 +10,5 @@ build/
 node_modules/
 .mypy_cache/
 .ruff_cache/
+
+.spotify_token

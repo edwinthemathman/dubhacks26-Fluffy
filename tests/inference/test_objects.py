@@ -4,7 +4,7 @@ from fluffy.brain.objects import find_line, object_notices, wants_room_scan
 from fluffy.clock import FrozenClock
 from fluffy.live.loop import LiveLoop
 from fluffy.perception.scene import ObjectSighting, PersonState, SceneState
-from fluffy.world.model import ObjectMemory
+from fluffy.world.model import ObjectMemory, objects_at_end
 from tests.inference.helpers import profiles
 
 
@@ -154,6 +154,56 @@ def test_retagging_keeps_a_missed_object_and_falls_back_to_home():
     clock.advance(16 * 60)
     stale = find_line(memory.recall("wallet", clock.now()), clock.now())
     assert stale == "wallet: usually on the side table"
+
+
+def test_setting_an_object_down_replaces_where_it_was():
+    scene = _scene(
+        objects=[_sight("phone", "in their hand", with_person=True)],
+        timeline=["holds the phone", "puts the phone on the table"],
+    )
+    ended = objects_at_end(scene)
+    assert len(ended) == 1
+    assert ended[0].location_desc == "on the table"
+    assert ended[0].with_person is False
+
+    clock = FrozenClock()
+    memory = ObjectMemory()
+    memory.note_live([_sight("phone", "in their hand", with_person=True)], clock.now())
+    memory.note_live(objects_at_end(scene), clock.now())
+    recall = memory.recall("phone", clock.now())
+    assert recall.location_desc == "on the table"
+    assert recall.with_person is False
+
+
+def test_a_later_scan_moves_the_tag_to_where_it_is_now():
+    clock = FrozenClock()
+    memory = ObjectMemory()
+    memory.note_live([_sight("phone", "in their hand", with_person=True)], clock.now())
+    memory.note_scan([_sight("phone", "on the table")], clock.now())
+    recall = memory.recall("phone", clock.now())
+    assert recall.location_desc == "on the table"
+    assert recall.home_desc == "on the table"
+    assert recall.with_person is False
+
+
+def test_puts_it_down_still_means_the_phone_they_were_holding():
+    scene = _scene(
+        objects=[_sight("phone", "in their hand", with_person=True)],
+        timeline=["puts it on the table"],
+    )
+    ended = objects_at_end(scene)
+    assert ended[0].location_desc == "on the table"
+    assert ended[0].with_person is False
+
+
+def test_picking_it_back_up_after_setting_it_down_tags_the_hand():
+    scene = _scene(
+        objects=[_sight("phone", "on the table")],
+        timeline=["puts the phone on the table", "picks up the phone"],
+    )
+    ended = objects_at_end(scene)
+    assert ended[0].location_desc == "in their hand"
+    assert ended[0].with_person is True
 
 
 def test_room_scan_triggers():
