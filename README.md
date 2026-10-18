@@ -7,25 +7,43 @@ The harness listens on port 8000. The mock home listens on port 8100.
 ## Setup
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --group dev
 ```
 
-Run the commands below from the repository root so `config/home.toml` is found.
+## Configuration
+
+Copy nothing by hand if you only want the app to boot. The first backend start creates `.env` from `.env.example` when `.env` is missing, and it will not overwrite a file that is already there. Fill in the empty secret lines locally. Each teammate uses their own `.env`. A deployed host should set the same variable names in its secret store.
+
+The file is read from the repository root, even if you start a command from another directory. A variable already exported in the shell wins over `.env`.
+
+| Provider | Required for “configured” | Also required before it can work |
+|---|---|---|
+| Perceptron | `PERCEPTRON_API_KEY` | Optional non-secret `PERCEPTRON_MODEL` |
+| ElevenLabs | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | A successful synthesis, which is separate from configuration |
+| Spotify | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | One browser sign-in. The refresh token is stored in `data/spotify_oauth.json` |
+| Photon | `PHOTON_API_KEY`, `PHOTON_PROJECT_ID`, `PHOTON_SENDER_ID`, `CAREGIVER_DESTINATION` | Provider delivery, which is separate from configuration |
+
+Missing provider values disable that integration and leave the site and simulated room usable. Missing Perceptron does not mark a typed request as a completed device action. Restart the harness, output service, and executor after changing `.env`.
 
 ## Run
 
 ```bash
-fluffy dev
+uv run fluffy dev --no-frontend
 ```
 
-That starts the mock home, the harness, and the stub executor. The same processes can be started separately:
+That starts the output service, the harness, and the executor. They inherit the loaded environment. In another shell:
 
 ```bash
-fluffy home
-fluffy harness
-fluffy executor-stub
+cd frontend
+npm run dev
+```
+
+The same backend processes can be started separately:
+
+```bash
+uv run fluffy home
+uv run fluffy harness
+uv run fluffy executor
 ```
 
 Streams:

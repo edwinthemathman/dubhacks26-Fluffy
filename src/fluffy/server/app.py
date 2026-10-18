@@ -110,6 +110,7 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
             "executor_online": runtime.executor_online,
             "listening": runtime.listening,
             "integrations": integrations,
+            "inference": settings.integrations.inference_status(),
         }
 
     @app.get("/api/session")

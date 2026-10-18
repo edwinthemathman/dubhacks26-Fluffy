@@ -14,13 +14,11 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import struct
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -79,11 +77,12 @@ def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
         else:
             from perceptron import AsyncClient
 
-            load_dotenv(ROOT / ".env")
-            key = os.environ.get("PERCEPTRON_API_KEY", "").strip()
-            if not key:
-                raise RuntimeError("PERCEPTRON_API_KEY is not set (put it in .env).")
-            client = AsyncClient(api_key=key, provider="perceptron")
+            from fluffy.config import load_integrations
+
+            config = load_integrations()
+            if not config.perceptron_configured:
+                raise RuntimeError("PERCEPTRON_API_KEY is not set. Add it to the repository-root .env.")
+            client = AsyncClient(api_key=config.perceptron_api_key, provider="perceptron")
             profiles = load_profiles(ROOT / "config" / "profiles")
             habits = load_habits(ROOT / "config" / "habits.toml")
             live = LiveLoop(

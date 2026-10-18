@@ -33,6 +33,9 @@ def _load() -> dict[str, dict[str, str]]:
 def _expand(value: str) -> str:
     text = value.strip()
     if text.startswith("$"):
+        from fluffy.config import load_local_env
+
+        load_local_env()
         return os.environ.get(text[1:], "").strip()
     return text
 

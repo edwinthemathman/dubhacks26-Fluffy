@@ -9,7 +9,6 @@ reuses the space. Numbers and handles live in the environment, never here.
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from typing import Any
 
@@ -51,11 +50,10 @@ class PhotonSms:
 
     @classmethod
     def from_env(cls) -> PhotonSms:
-        return cls(
-            os.environ.get("PHOTON_API_KEY", ""),
-            os.environ.get("PHOTON_PROJECT_ID", ""),
-            os.environ.get("PHOTON_FROM", ""),
-        )
+        from fluffy.config import load_integrations
+
+        config = load_integrations()
+        return cls(config.photon_api_key, config.photon_project_id, config.photon_from)
 
     def send_text(self, to: str, text: str) -> None:
         """Text `to`. Raises PhotonError when Photon refuses the send."""
@@ -127,7 +125,9 @@ def notify_fall(
     """Text the caregiver. Missing setup or a Photon error does not raise."""
     global _logged_skip
     sender = sms or shared_sms()
-    handle = (to or os.environ.get("PHOTON_CAREGIVER_HANDLE") or "").strip()
+    from fluffy.config import load_integrations
+
+    handle = (to or load_integrations().caregiver_handle).strip()
     if not sender.configured or not handle:
         if not _logged_skip:
             log.info(

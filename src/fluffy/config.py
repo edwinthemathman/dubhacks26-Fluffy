@@ -100,8 +100,13 @@ class HomeConfig:
         return [item.id for item in self.media]
 
 
+DEFAULT_PERCEPTRON_MODEL = "perceptron-mk1.5"
+
+
 @dataclass
 class IntegrationsConfig:
+    perceptron_api_key: str = ""
+    perceptron_model: str = ""
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     elevenlabs_model_id: str = ""
@@ -112,6 +117,21 @@ class IntegrationsConfig:
     photon_project_id: str = ""
     photon_sender_id: str = ""
     caregiver_destination: str = ""
+    photon_from: str = ""
+    caregiver_handle: str = ""
+
+    def __repr__(self) -> str:
+        return (
+            "IntegrationsConfig("
+            f"perceptron_configured={self.perceptron_configured}, "
+            f"elevenlabs_configured={self.elevenlabs_configured}, "
+            f"spotify_configured={self.spotify_configured}, "
+            f"photon_configured={self.photon_configured})"
+        )
+
+    @property
+    def perceptron_configured(self) -> bool:
+        return bool(self.perceptron_api_key)
 
     @property
     def elevenlabs_configured(self) -> bool:
@@ -130,17 +150,37 @@ class IntegrationsConfig:
     def spotify_configured(self) -> bool:
         return bool(self.spotify_client_id and self.spotify_client_secret)
 
+    def inference_status(self) -> dict[str, str]:
+        if self.perceptron_configured:
+            return {
+                "provider": "perceptron",
+                "readiness": "configured",
+                "detail": "Perceptron key is set. A live decision has not been verified.",
+            }
+        return {
+            "provider": "perceptron",
+            "readiness": "unavailable",
+            "detail": "PERCEPTRON_API_KEY is not set. Inference will not turn text into device actions.",
+        }
+
 
 def _env(source: dict[str, str], name: str) -> str:
     return source.get(name, "").strip()
 
 
 def load_integrations(source: dict[str, str] | None = None) -> IntegrationsConfig:
-    env = source if source is not None else dict(os.environ)
+    if source is None:
+        load_local_env()
+        env = dict(os.environ)
+    else:
+        env = source
+    model_id = _env(env, "ELEVENLABS_MODEL_ID") or _env(env, "ELEVENLABS_MODEL")
     return IntegrationsConfig(
+        perceptron_api_key=_env(env, "PERCEPTRON_API_KEY"),
+        perceptron_model=_env(env, "PERCEPTRON_MODEL"),
         elevenlabs_api_key=_env(env, "ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=_env(env, "ELEVENLABS_VOICE_ID"),
-        elevenlabs_model_id=_env(env, "ELEVENLABS_MODEL_ID"),
+        elevenlabs_model_id=model_id,
         spotify_client_id=_env(env, "SPOTIFY_CLIENT_ID"),
         spotify_client_secret=_env(env, "SPOTIFY_CLIENT_SECRET"),
         spotify_redirect_uri=_env(env, "SPOTIFY_REDIRECT_URI")
@@ -149,11 +189,21 @@ def load_integrations(source: dict[str, str] | None = None) -> IntegrationsConfi
         photon_project_id=_env(env, "PHOTON_PROJECT_ID"),
         photon_sender_id=_env(env, "PHOTON_SENDER_ID"),
         caregiver_destination=_env(env, "CAREGIVER_DESTINATION"),
+        photon_from=_env(env, "PHOTON_FROM"),
+        caregiver_handle=_env(env, "PHOTON_CAREGIVER_HANDLE"),
     )
 
 
+def perceptron_model_name(source: dict[str, str] | None = None) -> str:
+    return load_integrations(source).perceptron_model or DEFAULT_PERCEPTRON_MODEL
+
+
 def load_home_config(path: Path, source: dict[str, str] | None = None) -> HomeConfig:
-    env = source if source is not None else dict(os.environ)
+    if source is None:
+        load_local_env()
+        env = dict(os.environ)
+    else:
+        env = source
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
     rooms: list[RoomConfig] = []
     for room in raw.get("rooms", []):
@@ -229,6 +279,27 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def ensure_env_file(root: Path | None = None) -> Path:
+    """Create a placeholder .env from the example. Never overwrite an existing file."""
+
+    base = root or repo_root()
+    path = base / ".env"
+    example = base / ".env.example"
+    if not path.exists() and example.is_file():
+        path.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    return path
+
+
+def load_local_env(root: Path | None = None) -> None:
+    """Load the repository-root .env. Values already in the process environment win."""
+
+    from dotenv import load_dotenv
+
+    base = root or repo_root()
+    ensure_env_file(base)
+    load_dotenv(base / ".env", override=False)
+
+
 @dataclass
 class RuntimeSettings:
     root: Path
@@ -242,6 +313,12 @@ class RuntimeSettings:
     data_dir: Path = field(default_factory=lambda: Path("data"))
     session_id: str = "ses_demo"
     autotick_safety: bool = True
+
+    def __repr__(self) -> str:
+        return (
+            f"RuntimeSettings(session_id={self.session_id!r}, harness={self.harness_url!r}, "
+            f"home={self.home_url!r}, {self.integrations!r})"
+        )
 
     @property
     def harness_url(self) -> str:
@@ -261,8 +338,12 @@ class RuntimeSettings:
 
 
 def load_settings(root: Path | None = None, environ: dict[str, str] | None = None) -> RuntimeSettings:
-    env = environ if environ is not None else dict(os.environ)
     base = root or repo_root()
+    if environ is None:
+        load_local_env(base)
+        env = dict(os.environ)
+    else:
+        env = environ
     config_path = Path(env.get("FLUFFY_CONFIG", base / "config" / "home.toml"))
     data_dir = Path(env.get("FLUFFY_DATA", base / "data"))
     token = _env(env, "FLUFFY_INTERNAL_TOKEN") or "dev-internal-token"

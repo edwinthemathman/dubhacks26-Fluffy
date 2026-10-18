@@ -13,6 +13,7 @@ from typing import Any
 
 from perceptron import Client, SDKError, pydantic_format, video
 
+from fluffy.config import DEFAULT_PERCEPTRON_MODEL, perceptron_model_name
 from fluffy.brain.consent import ConsentManager
 from fluffy.brain.cues import build_help_plan, derive
 from fluffy.brain.habits import (
@@ -37,7 +38,7 @@ from fluffy.perception.provider import ToolCall
 from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
 
-MODEL = "perceptron-mk1.5"
+MODEL = DEFAULT_PERCEPTRON_MODEL
 MAX_ROUNDS = 3
 REQUEST_TIMEOUT_S = 120
 REASONING_CAP = 4000
@@ -160,7 +161,7 @@ def _analyze_uploaded(
 
     for round_index in range(MAX_ROUNDS):
         completion = client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=messages,
             tools=tools,
             parallel_tool_calls=True,
@@ -393,7 +394,7 @@ def _transcribe(
 ) -> tuple[TranscriptRead | None, str | None]:
     try:
         completion = client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=[
                 {
                     "role": "user",
@@ -418,7 +419,7 @@ def _hear(client: Client, file_id: str) -> tuple[SoundRead | None, str | None]:
     """A sound-only call. The picture is attached so a voice can be placed."""
     try:
         completion = client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=[
                 {
                     "role": "user",
@@ -447,7 +448,7 @@ def _read_scene(
 ) -> tuple[SceneState | None, str | None, str | None]:
     try:
         completion = client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=[
                 {
                     "role": "user",

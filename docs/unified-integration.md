@@ -37,7 +37,7 @@ npm ci
 npm run dev
 ```
 
-Harness `http://127.0.0.1:8000`. Output service `http://127.0.0.1:8100`. Frontend `http://127.0.0.1:3000`. Copy `.env.example` to `.env` and fill keys locally. Do not commit `.env`.
+Harness `http://127.0.0.1:8000`. Output service `http://127.0.0.1:8100`. Frontend `http://127.0.0.1:3000`. The backend loads the repository-root `.env` before it builds settings or starts child processes. Existing process variables win. Restart those processes after editing `.env`. Do not commit `.env`.
 
 `PERCEPTRON_API_KEY` is optional for boot. Without it, `POST /api/input/text` accepts the words and then reports that Perceptron is not configured. It does not invent a device action.
 

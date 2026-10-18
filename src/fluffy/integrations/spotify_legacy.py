@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -26,7 +25,11 @@ class Spotify:
     ) -> None:
         self.client = client or httpx.Client()
         self.token_path = token_path or TOKEN_PATH
-        self.client_id = (client_id if client_id is not None else os.environ.get("SPOTIFY_CLIENT_ID", "")).strip()
+        if client_id is None:
+            from fluffy.config import load_integrations
+
+            client_id = load_integrations().spotify_client_id
+        self.client_id = client_id.strip()
         self._access = ""
         self._access_until = 0.0
 

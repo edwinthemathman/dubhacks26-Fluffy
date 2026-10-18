@@ -18,8 +18,8 @@ from perceptron import AsyncClient, SDKError, pydantic_format, video_frames
 from perceptron import audio as audio_part
 
 from fluffy.brain.decide import _asked, _asked_choices, _split, system_prompt
+from fluffy.config import perceptron_model_name
 from fluffy.demo.analyze import (
-    MODEL,
     SOUND_PROMPT,
     scene_prompt,
     _meta_result,
@@ -96,7 +96,7 @@ async def read_scene(
     # soundtrack do. A transcript call here would add a second reasoning pass.
     try:
         completion = await client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=[
                 {
                     "role": "user",
@@ -127,7 +127,7 @@ async def read_transcript(client: AsyncClient, wav: bytes, profile: Profile | No
     started = time.perf_counter()
     try:
         completion = await client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=[
                 {
                     "role": "user",
@@ -152,7 +152,7 @@ async def read_sound(client: AsyncClient, wav: bytes) -> Read:
     started = time.perf_counter()
     try:
         completion = await client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=[
                 {
                     "role": "user",
@@ -226,7 +226,7 @@ async def answer_from_audio(client: AsyncClient, wav: bytes, question: str) -> R
     started = time.perf_counter()
     try:
         completion = await client.chat.completions.create(
-            model=MODEL,
+            model=perceptron_model_name(),
             messages=[
                 {
                     "role": "user",
@@ -290,7 +290,7 @@ async def decide(
     for round_index in range(MAX_ROUNDS):
         try:
             completion = await client.chat.completions.create(
-                model=MODEL,
+                model=perceptron_model_name(),
                 messages=messages,
                 tools=perceptron_tools(),
                 parallel_tool_calls=True,
@@ -355,7 +355,7 @@ async def decide_text(
     for round_index in range(MAX_ROUNDS):
         try:
             completion = await client.chat.completions.create(
-                model=MODEL,
+                model=perceptron_model_name(),
                 messages=messages,
                 tools=perceptron_tools(),
                 parallel_tool_calls=True,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -59,13 +58,7 @@ class PerceptronTextInterpreter:
 
 
 def build_text_interpreter(settings: RuntimeSettings) -> TextInterpreter:
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv(settings.root / ".env")
-    except ImportError:
-        pass
-    key = os.environ.get("PERCEPTRON_API_KEY", "").strip()
+    key = settings.integrations.perceptron_api_key
     if not key:
         return UnavailableInterpreter()
     from perceptron import AsyncClient

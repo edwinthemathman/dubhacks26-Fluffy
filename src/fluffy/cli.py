@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fluffy.config import load_settings, repo_root
+from fluffy.config import load_local_env, load_settings, repo_root
 from fluffy.models.contracts import (
     ActionResult,
     AuthorizationRecord,
@@ -63,11 +63,19 @@ def _call(tool: str, args: list[str]) -> int:
     return 0 if response.status_code < 400 else 1
 
 
-def _dev(with_frontend: bool) -> int:
-    root = repo_root()
+def child_environment() -> dict[str, str]:
+    """Environment inherited by the harness, output service, and executor."""
+
+    load_local_env()
     env = os.environ.copy()
     if not env.get("FLUFFY_INTERNAL_TOKEN"):
         env["FLUFFY_INTERNAL_TOKEN"] = secrets.token_urlsafe(24)
+    return env
+
+
+def _dev(with_frontend: bool) -> int:
+    root = repo_root()
+    env = child_environment()
     commands = [
         [sys.executable, "-m", "mockhome.app"],
         [sys.executable, "-m", "fluffy.server.app"],
@@ -92,6 +100,7 @@ def _dev(with_frontend: bool) -> int:
 
 
 def main() -> None:
+    load_local_env()
     parser = argparse.ArgumentParser(prog="fluffy")
     sub = parser.add_subparsers(dest="command", required=True)
     dev = sub.add_parser("dev", help="start the output service, harness, and executor")

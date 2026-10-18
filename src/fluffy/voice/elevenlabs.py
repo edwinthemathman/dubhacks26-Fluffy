@@ -6,7 +6,6 @@ once at startup so a check-in never waits on the network.
 
 from __future__ import annotations
 
-import os
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 
@@ -40,10 +39,13 @@ class ElevenLabsVoice:
 
     @classmethod
     def from_env(cls) -> ElevenLabsVoice:
+        from fluffy.config import load_integrations
+
+        config = load_integrations()
         return cls(
-            api_key=os.environ.get("ELEVENLABS_API_KEY", ""),
-            voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "") or DEFAULT_VOICE_ID,
-            model_id=os.environ.get("ELEVENLABS_MODEL", "") or DEFAULT_MODEL,
+            api_key=config.elevenlabs_api_key,
+            voice_id=config.elevenlabs_voice_id or DEFAULT_VOICE_ID,
+            model_id=config.elevenlabs_model_id or DEFAULT_MODEL,
         )
 
     def _key(self, text: str, speed: float) -> tuple[str, str, float, str]:

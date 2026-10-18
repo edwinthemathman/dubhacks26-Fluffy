@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 
 import uvicorn
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from perceptron import SDKError
@@ -23,8 +22,6 @@ PROFILES = load_profiles(ROOT / "config" / "profiles")
 MAX_BYTES = 40 * 1024 * 1024
 ALLOWED_SUFFIXES = {".mp4", ".webm", ".mov", ".m4v"}
 
-load_dotenv(ROOT / ".env")
-
 app = FastAPI(title="Fluffy clip demo")
 
 
@@ -34,8 +31,9 @@ def index() -> FileResponse:
 
 
 @app.get("/api/health")
-def health() -> dict[str, bool]:
-    return {"ok": True, "key": bool(_api_key())}
+def health() -> dict[str, str | bool]:
+    ready = bool(_api_key())
+    return {"ok": True, "inference": "configured" if ready else "unavailable"}
 
 
 @app.post("/api/analyze")
@@ -106,7 +104,9 @@ def _profile(name: str):
 
 
 def _api_key() -> str:
-    return os.environ.get("PERCEPTRON_API_KEY", "").strip()
+    from fluffy.config import load_integrations
+
+    return load_integrations().perceptron_api_key
 
 
 def _public_error(exc: SDKError) -> str:
