@@ -32,6 +32,7 @@ from fluffy.clock import Clock
 from fluffy.ids import IdFactory
 from fluffy.models import Plan, Trigger
 from fluffy.models.tool_catalog import perceptron_tools
+from fluffy.notify.photon import notify_plan
 from fluffy.perception.provider import ToolCall
 from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
@@ -265,6 +266,8 @@ def _analyze_uploaded(
             }
         )
         plan = update.plan or plan
+
+    notify_plan(plan)
 
     return _result(
         reply=reply or (consent["question"] if consent else "") or asked or "",

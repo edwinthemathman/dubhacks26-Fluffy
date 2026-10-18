@@ -33,6 +33,7 @@ from fluffy.live.perceive import Decision, Read, Window
 from fluffy.live.presence import RoomPresence
 from fluffy.live.voice_policy import VoicePolicy
 from fluffy.models import Plan, Trigger
+from fluffy.notify.photon import notify_fall
 from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
 
@@ -210,6 +211,7 @@ class LiveLoop:
         self.room_change = ""
         self.says: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.timers: set[asyncio.Task] = set()
+        self._help_text_sent = False
 
     # ---------- inputs ----------
 
@@ -741,6 +743,7 @@ class LiveLoop:
             if wants_help:
                 why = reasons.get("alert_caregiver") or "looks like a fall"
                 self.emit({"type": "think", "turn_id": turn_id, "note": f"model: alert caregiver ({why})"[:48]})
+                self._text_help()
             if self.safety.phase in {"idle", "watching"} and wants_help:
                 self._safety_effects(self.safety.on_event("possible_fall"), trigger="model saw a fall")
                 self._end(turn_id, started, "asked", note="check-in started")
@@ -928,6 +931,8 @@ class LiveLoop:
             self._later(self.s.caption_s, lambda: self.home.state["caption"] == text and self.emit(self.home.clear_caption()))
         elif tool == "announce":
             self._say(turn_id, str(args.get("text", "")), voice=True)
+        elif tool == "alert_caregiver":
+            self._text_help()
 
     def _finish_flash(self, token: int) -> None:
         event = self.home.end_flash(token)
@@ -968,10 +973,18 @@ class LiveLoop:
             elif effect.kind in {"notify_person"} and not effect.plans:
                 self._say(turn.turn_id, effect.text, voice=True)
             elif effect.kind == "cleared":
+                self._help_text_sent = False
                 self._say(turn.turn_id, effect.text, voice=True)
                 self.emit({"type": "turn.end", "turn_id": turn.turn_id, "ms": 0, "outcome": "nothing"})
                 self.emit({"type": "safety", "state": "ok"})
                 self.safety_turn = None
+
+    def _text_help(self) -> None:
+        """One SMS per incident. The later safety alert does not text again."""
+        if self._help_text_sent:
+            return
+        if notify_fall():
+            self._help_text_sent = True
 
     def _thumb(self) -> str | None:
         frame = self.frames.latest
