@@ -22,9 +22,11 @@ from typing import Any
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response, StreamingResponse
 
 from fluffy.live.loop import LiveLoop, PerceptronPerceiver
 from fluffy.profile import load_profiles
+from fluffy.voice.elevenlabs import SAFETY_LINES, ElevenLabsVoice
 
 ROOT = Path(__file__).resolve().parents[3]
 FRAME = 1
@@ -55,7 +57,7 @@ class Hub:
                     self.screens.discard(screen)
 
 
-def create_app(loop_factory=None) -> FastAPI:
+def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
     hub = Hub()
     state: dict[str, Any] = {}
 
@@ -64,6 +66,7 @@ def create_app(loop_factory=None) -> FastAPI:
         if loop_factory is not None:
             live = loop_factory(hub.emit)
             client = None
+            voice = voice_factory() if voice_factory is not None else ElevenLabsVoice("")
         else:
             from perceptron import AsyncClient
 
@@ -74,7 +77,10 @@ def create_app(loop_factory=None) -> FastAPI:
             client = AsyncClient(api_key=key, provider="perceptron")
             profiles = load_profiles(ROOT / "config" / "profiles")
             live = LiveLoop(PerceptronPerceiver(client), profiles, profile_id="blind", emit=hub.emit)
+            voice = ElevenLabsVoice.from_env()
+            await voice.pregenerate(SAFETY_LINES, (1.0, 0.85))
         state["loop"] = live
+        state["voice"] = voice
         tasks = [asyncio.create_task(hub.pump()), asyncio.create_task(live.run())]
         try:
             yield
@@ -83,13 +89,45 @@ def create_app(loop_factory=None) -> FastAPI:
                 task.cancel()
             if client is not None:
                 await client.aclose()
+            await voice.aclose()
 
     app = FastAPI(title="Fluffy live", lifespan=lifespan)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         live: LiveLoop = state["loop"]
-        return {"ok": True, "frames": len(live.frames.frames), "profile": live.profile.id, "paused": live.paused}
+        voice: ElevenLabsVoice = state["voice"]
+        return {
+            "ok": True,
+            "frames": len(live.frames.frames),
+            "profile": live.profile.id,
+            "paused": live.paused,
+            "voice": voice.available,
+        }
+
+    @app.get("/api/voice/{say_id}")
+    async def voice(say_id: str):
+        live: LiveLoop = state["loop"]
+        speaker: ElevenLabsVoice = state["voice"]
+        record = live.says.get(say_id)
+        if record is None or not speaker.available:
+            return Response(status_code=204)
+        cached = speaker.cached(record["text"], record["speed"])
+        if cached is not None:
+            return Response(content=cached, media_type="audio/mpeg")
+
+        agen = speaker.stream(record["text"], record["speed"])
+        try:
+            first = await agen.__anext__()
+        except StopAsyncIteration:
+            return Response(status_code=204)
+
+        async def body():
+            yield first
+            async for chunk in agen:
+                yield chunk
+
+        return StreamingResponse(body(), media_type="audio/mpeg")
 
     @app.websocket("/ws/ui")
     async def ui(socket: WebSocket) -> None:

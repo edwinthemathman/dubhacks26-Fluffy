@@ -1,0 +1,46 @@
+.room {
+  position: relative;
+  margin: 0;
+  background: var(--blue-mist);
+  border-radius: 16px;
+  overflow: hidden;
+  min-height: 280px;
+}
+.room svg { display: block; width: 100%; height: auto; }
+.flash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #1a6fe8;
+  animation: flash 0.7s ease-in-out 3;
+  pointer-events: none;
+}
+.meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.caption {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 42px;
+  margin: 0;
+  background: var(--blue);
+  color: white;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 800;
+}
+[data-theme="dark"] .caption { color: #071422; }
+.waves rect {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: wave 0.7s ease-in-out infinite;
+}
+.waves rect:nth-child(2) { animation-delay: 0.12s; }
+.waves rect:nth-child(3) { animation-delay: 0.24s; }

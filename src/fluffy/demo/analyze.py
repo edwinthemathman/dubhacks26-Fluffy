@@ -27,6 +27,7 @@ from fluffy.profile.model import Profile
 MODEL = "perceptron-mk1.5"
 MAX_ROUNDS = 3
 REQUEST_TIMEOUT_S = 120
+REASONING_CAP = 4000
 
 SAMPLE_CLIP_URL = (
     "https://raw.githubusercontent.com/perceptron-ai-inc/perceptron/"
@@ -75,12 +76,37 @@ def _analyze_uploaded(
     *,
     clock: Clock,
 ) -> dict[str, Any]:
+    trace: list[dict[str, Any]] = []
     heard, sound_error = _hear(client, file_id)
+    trace.append(
+        {
+            "step": "heard",
+            "summary": (heard.heard if heard else "") or (sound_error or ""),
+            "labels": [label for label in (heard.sounds if heard else []) if label != "none"],
+            "thinking": None,
+        }
+    )
     spoken, transcript_error = _transcribe(client, file_id, profile)
     transcript = spoken.transcript.strip() if spoken else ""
-    scene, scene_error = _read_scene(client, file_id, transcript)
+    trace.append(
+        {
+            "step": "transcript",
+            "summary": transcript or (transcript_error or ""),
+            "thinking": None,
+        }
+    )
+    scene, scene_error, scene_thinking = _read_scene(client, file_id, transcript)
     scene = apply_sound_read(scene, heard)
     cues = derive(scene)
+    trace.append(
+        {
+            "step": "scene",
+            "timeline": list(scene.timeline) if scene is not None else [],
+            "summary": (scene.summary if scene is not None else "") or (scene_error or ""),
+            "thinking": scene_thinking,
+        }
+    )
+    trace.append({"step": "cues", "cues": sorted(cues)})
     scene_text = _scene_text(scene)
 
     # Always run the decision call. It watches the clip itself, so it can
@@ -119,12 +145,24 @@ def _analyze_uploaded(
         rounds += 1
         usage = _usage(completion) or usage
         reply = (completion.text or "").strip()
+        # Captured before any parse, so a bad tool call still keeps the thinking.
+        thinking = _thinking(getattr(completion, "reasoning", None))
         raw_calls = completion.tool_calls or []
         meta, device, bad = _split(
             [
                 ToolCall(id=call.id, name=call.name, arguments=call.arguments or "")
                 for call in raw_calls
             ]
+        )
+        trace.append(
+            {
+                "step": "decide",
+                "round": round_index + 1,
+                "thinking": thinking,
+                "reply": reply,
+                "tool_calls": _trace_calls(meta, device),
+                "rejected": bad,
+            }
         )
         rejected.extend(bad)
         asked = _asked(meta) or asked
@@ -158,6 +196,13 @@ def _analyze_uploaded(
     )
     if plan is None and "fall" in cues:
         plan = build_help_plan(clock, profile)
+        trace.append(
+            {
+                "step": "fallback",
+                "summary": "The model proposed nothing, so the fall rule asked about calling for help.",
+                "tool": "alert_caregiver",
+            }
+        )
 
     consent = None
     if plan is not None:
@@ -174,6 +219,14 @@ def _analyze_uploaded(
             "reason": update.reason,
             "given_by": update.plan.consent.given_by if update.plan else None,
         }
+        trace.append(
+            {
+                "step": "consent",
+                "status": update.status,
+                "reason": update.reason,
+                "question": update.question,
+            }
+        )
         plan = update.plan or plan
 
     return _result(
@@ -191,6 +244,7 @@ def _analyze_uploaded(
         rounds=rounds,
         usage=usage,
         outcome=_outcome(consent),
+        trace=trace,
     )
 
 
@@ -343,7 +397,7 @@ def _hear(client: Client, file_id: str) -> tuple[SoundRead | None, str | None]:
 
 def _read_scene(
     client: Client, file_id: str, transcript: str = ""
-) -> tuple[SceneState | None, str | None]:
+) -> tuple[SceneState | None, str | None, str | None]:
     try:
         completion = client.chat.completions.create(
             model=MODEL,
@@ -368,8 +422,11 @@ def _read_scene(
             vision_config={"enable_audio_in_video": True},
         )
     except SDKError as exc:
-        return None, _safe_error(exc)
-    return _parse_model(completion.text, SceneState, "Scene read")
+        return None, _safe_error(exc), None
+    # Before the JSON parse, so a failed scene still keeps the model's words.
+    thinking = _thinking(getattr(completion, "reasoning", None))
+    scene, error = _parse_model(completion.text, SceneState, "Scene read")
+    return scene, error, thinking
 
 
 def _parse_model(text: str | None, model: type, label: str):
@@ -422,6 +479,8 @@ def _user_text(
     scene: SceneState | None,
     cues: set[str] | None = None,
     transcript: str = "",
+    asked: str = "",
+    answer: str = "",
 ) -> str:
     said = utterance or "(nothing typed)"
     words = transcript.strip() or "(none)"
@@ -453,6 +512,11 @@ def _user_text(
             "If it says they fell, can't get up, or need help, call alert_caregiver and nothing else. "
             "'Help me find my keys' is a request to find keys, not a fall.",
             f"- Typed: {said}",
+            (
+                f'Fluffy just asked: "{asked.strip()}". The person answered: "{answer.strip()}".'
+                if asked.strip() and answer.strip()
+                else ""
+            ),
             "",
             f"Room: living_room. Profile: {profile.id}.",
             "Devices: lamp.living_floor (floor lamp by the sofa), light.living_ceiling, "
@@ -487,6 +551,7 @@ def _result(
     rounds: int,
     usage: dict[str, int],
     outcome: str,
+    trace: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "reply": reply,
@@ -503,7 +568,31 @@ def _result(
         "rejected": rejected,
         "rounds": rounds,
         "usage": usage,
+        "trace": trace,
     }
+
+
+def _thinking(value: str | None) -> str | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    if len(text) > REASONING_CAP:
+        return text[:REASONING_CAP]
+    return text
+
+
+def _trace_calls(meta: list[tuple[str, Any]], device: list[Any]) -> list[dict[str, Any]]:
+    calls = [parsed for _, parsed in meta]
+    calls.extend(device)
+    return [
+        {
+            "name": parsed.name,
+            "args": parsed.args,
+            "reason": parsed.reason,
+            "confidence": parsed.confidence,
+        }
+        for parsed in calls
+    ]
 
 
 def _outcome(consent: dict[str, Any] | None) -> str:

@@ -1,0 +1,64 @@
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.columns {
+  display: grid;
+  grid-template-columns: 0.9fr 1.15fr 0.95fr;
+  gap: 14px;
+  align-items: start;
+}
+.camera, .roomCard, .calls { padding: 12px; }
+.view {
+  min-height: 320px;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(7, 20, 34, 0.2)),
+    #12365f;
+  color: white;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.view p { margin: auto 0 0; max-width: 26ch; }
+.view ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.view li {
+  background: white;
+  color: #0d2744;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+.think { align-self: flex-start; }
+.view { position: relative; overflow: hidden; }
+.feed {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* mirror, like a selfie view */
+}
+.overlay {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.overlayTop { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.camButton { margin-left: auto; cursor: pointer; border: 0; font: inherit; }
+.camButton:disabled { opacity: 0.5; cursor: not-allowed; }
+.overlay ul { margin-top: auto; }
+.calls h2 { margin: 4px 0 8px; font-size: 1.1rem; }
+@media (max-width: 980px) {
+  .columns { grid-template-columns: 1fr; }
+}

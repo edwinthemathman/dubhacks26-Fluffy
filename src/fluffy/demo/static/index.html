@@ -121,6 +121,18 @@
     .action code { font-size: 0.95rem; }
     .args { color: var(--muted); line-height: 1.4; }
     details { margin-top: 12px; color: var(--muted); }
+    .trace-step { margin-top: 12px; }
+    pre.thinking {
+      white-space: pre-wrap;
+      color: var(--muted);
+      max-height: 12rem;
+      overflow: auto;
+      background: #f8fbff;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.85rem;
+      margin: 6px 0 0;
+    }
     .status { min-height: 1.2em; margin: 10px 0 0; }
     @media (max-width: 700px) {
       .profiles { grid-template-columns: 1fr; }
@@ -283,6 +295,7 @@
       } else if (outcome === "quiet") {
         parts.push(`<p>No device change.</p>`);
       }
+      parts.push(renderTrace(body));
       const detail = [
         `rounds ${body.rounds}`,
         body.usage && body.usage.total_tokens ? `${body.usage.total_tokens} tokens` : "",
@@ -290,6 +303,57 @@
       ].filter(Boolean).join(" · ");
       if (detail) parts.push(`<details><summary>Call details</summary><p>${escapeHtml(detail)}</p></details>`);
       resultBox.innerHTML = parts.join("");
+    }
+
+    function renderTrace(body) {
+      const trace = body.trace || [];
+      if (!trace.length) return "";
+      const heard = String(body.heard || "").toLowerCase();
+      const open = (body.outcome || "quiet") === "quiet" && /impact|pain|help/.test(heard);
+      const blocks = trace.map((entry, index) => {
+        const label = traceLabel(entry);
+        const summary = traceSummary(entry);
+        const showThinking = entry.step === "scene" || entry.step === "decide";
+        let thought = "";
+        if (showThinking) {
+          const thinking = entry.thinking ? String(entry.thinking) : "not returned";
+          thought = `<pre class="thinking">${escapeHtml(thinking)}</pre>`;
+        }
+        return `<div class="trace-step"><p class="kicker">${index + 1}. ${escapeHtml(label)}</p><p>${escapeHtml(summary)}</p>${thought}</div>`;
+      }).join("");
+      return `<details class="trace"${open ? " open" : ""}><summary>How Fluffy decided</summary>${blocks}</details>`;
+    }
+
+    function traceLabel(entry) {
+      if (entry.step === "heard") return "Heard";
+      if (entry.step === "transcript") return "Transcript";
+      if (entry.step === "scene") return "Saw";
+      if (entry.step === "cues") return "Cues";
+      if (entry.step === "decide") return `Decision round ${entry.round || 1}`;
+      if (entry.step === "fallback") return "Fallback";
+      if (entry.step === "consent") return "Consent";
+      return entry.step || "Step";
+    }
+
+    function traceSummary(entry) {
+      if (entry.step === "heard") {
+        const labels = (entry.labels || []).join(", ");
+        return [entry.summary, labels].filter(Boolean).join(" · ") || "nothing";
+      }
+      if (entry.step === "transcript") return entry.summary || "Nothing said.";
+      if (entry.step === "scene") return entry.summary || "No summary.";
+      if (entry.step === "cues") return (entry.cues && entry.cues.length) ? entry.cues.join(", ") : "none";
+      if (entry.step === "decide") {
+        const names = (entry.tool_calls || []).map((call) => call.name).filter(Boolean);
+        if (entry.reply) return entry.reply;
+        if (names.length) return `Called ${names.join(", ")}`;
+        return "No tools.";
+      }
+      if (entry.step === "fallback") {
+        return entry.summary || "The model proposed nothing, so the fall rule asked about calling for help.";
+      }
+      if (entry.step === "consent") return entry.question || entry.reason || entry.status || "";
+      return entry.summary || "";
     }
 
     function escapeHtml(value) {

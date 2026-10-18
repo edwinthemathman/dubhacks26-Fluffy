@@ -161,6 +161,8 @@ def system_prompt(profile: Profile) -> str:
             "- One request can need several tools. Call all of them together. "
             "Play music and dim the lights is play_sound with sound=music and dim_lights in the same turn. "
             "Do not stop after the first part. A fall is the exception: alert_caregiver and nothing else.",
+            "- If you can see something may be wanted but you're unsure what, call ask_user "
+            "with one short, friendly question instead of guessing or doing nothing.",
             "- Nothing above, or nothing changed: call no tools and reply with an empty message.",
             "",
             "CONSENT IS HANDLED FOR YOU",
@@ -219,6 +221,16 @@ def _asked(meta: list[tuple[str, ParsedCall]]) -> str | None:
     for _, call in meta:
         if call.name == "ask_user":
             return str(call.args["question"])
+    return None
+
+
+def _asked_choices(meta: list[tuple[str, ParsedCall]]) -> list[str] | None:
+    for _, call in meta:
+        if call.name == "ask_user":
+            raw = call.args.get("choices")
+            if isinstance(raw, list) and raw:
+                return [str(item) for item in raw]
+            return None
     return None
 
 

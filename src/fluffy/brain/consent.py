@@ -26,11 +26,13 @@ _NO = {"no", "nope", "nah", "dont", "don't", "cancel", "stop"}
 
 @dataclass
 class OpenQuestion:
-    plan: Plan
     question: str
     asked_at: datetime
     profile: Profile
+    plan: Plan | None = None
     repeated: bool = False
+    # An offer Fluffy raised on its own, not a reply to something just said.
+    unprompted: bool = False
 
 
 @dataclass
@@ -117,8 +119,26 @@ class ConsentManager:
             return None
         return self._close(kind == "nod", via="nod")
 
+    def open_instruction(self, question: str, profile: Profile, *, unprompted: bool) -> None:
+        """A question with no plan behind it, from the model's ask_user call."""
+        self.open = OpenQuestion(
+            question=question,
+            asked_at=self.clock.now(),
+            profile=profile,
+            plan=None,
+            unprompted=unprompted,
+        )
+
+    def take_open(self) -> tuple[str, Plan | None]:
+        """Close the open question without treating it as a yes or a no."""
+        question = self.open
+        if question is None:
+            return "", None
+        self.open = None
+        return question.question, question.plan
+
     def answer_pointing(self, device_id: str | None) -> ConsentUpdate | None:
-        if self.open is None or not device_id:
+        if self.open is None or self.open.plan is None or not device_id:
             return None
         targets = _targeted_devices(self.open.plan)
         if device_id not in targets:
@@ -154,6 +174,7 @@ class ConsentManager:
             question=question,
             asked_at=self.clock.now(),
             profile=profile,
+            unprompted=plan.trigger.kind != "spoken",
         )
         if plan.trigger.kind == "inferred":
             self.arbiter.note_offer()
@@ -164,6 +185,12 @@ class ConsentManager:
         if question is None:
             return ConsentUpdate(status="ignored", reason="no question is open")
         self.open = None
+        if question.plan is None:
+            return ConsentUpdate(
+                status="declined",
+                question=question.question,
+                reason=reason or ("answered" if yes else "declined"),
+            )
         if not yes:
             self.arbiter.note_decline(question.plan)
             return ConsentUpdate(

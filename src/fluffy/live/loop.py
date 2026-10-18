@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
@@ -28,8 +28,9 @@ from fluffy.ids import IdFactory
 from fluffy.live.buffers import AudioBuffer, FrameBuffer, SpeechGate, to_wav
 from fluffy.live.home import HomeState
 from fluffy.live.perceive import Decision, Read, Window
+from fluffy.live.voice_policy import VoicePolicy
 from fluffy.models import Plan, Trigger
-from fluffy.perception.scene import SceneState, SoundRead, apply_sound_read
+from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
 
 log = logging.getLogger("fluffy.live")
@@ -62,6 +63,7 @@ class Perceiver(Protocol):
     async def read_scene(self, window: Window, *, effort: str, profile: Profile | None = None) -> Read: ...
     async def read_sound(self, wav: bytes) -> Read: ...
     async def answer(self, wav: bytes, question: str) -> Read: ...
+    async def transcript(self, wav: bytes, profile: Profile) -> Read: ...
     async def decide(
         self,
         window: Window,
@@ -71,6 +73,8 @@ class Perceiver(Protocol):
         scene: SceneState | None,
         cues: set[str],
         effort: str,
+        asked: str = "",
+        answer: str = "",
     ) -> Decision: ...
 
 
@@ -92,9 +96,20 @@ class PerceptronPerceiver:
     async def answer(self, wav, question):
         return await self._p.answer_from_audio(self.client, wav, question)
 
-    async def decide(self, window, *, profile, utterance, scene, cues, effort):
+    async def transcript(self, wav, profile):
+        return await self._p.read_transcript(self.client, wav, profile)
+
+    async def decide(self, window, *, profile, utterance, scene, cues, effort, asked="", answer=""):
         return await self._p.decide(
-            self.client, window, profile=profile, utterance=utterance, scene=scene, cues=cues, effort=effort
+            self.client,
+            window,
+            profile=profile,
+            utterance=utterance,
+            scene=scene,
+            cues=cues,
+            effort=effort,
+            asked=asked,
+            answer=answer,
         )
 
 
@@ -106,6 +121,8 @@ class DecideRequest:
     at: float
     wav: bytes | None = None
     utterance: str = ""
+    asked: str = ""
+    answer: str = ""
 
 
 @dataclass
@@ -140,6 +157,7 @@ class LiveLoop:
         self.home = HomeState()
         self.consent = ConsentManager(self.clock)
         self.safety = SafetyMachine(self.clock, self.profile)
+        self.policy = VoicePolicy(self.clock)
         self.scene: SceneState | None = None
         self.active_cues: set[str] = set()
         self.latched: dict[str, float] = {}
@@ -152,6 +170,8 @@ class LiveLoop:
         self.open_turn: OpenTurn | None = None
         self.safety_turn: str | None = None
         self.paused = False
+        self.mute_until = 0.0
+        self.says: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.timers: set[asyncio.Task] = set()
 
     # ---------- inputs ----------
@@ -170,7 +190,7 @@ class LiveLoop:
             self.last_motion = now
 
     def on_audio(self, pcm: bytes) -> None:
-        if self.paused:
+        if self.paused or self.now() < self.mute_until:
             return
         rms = self.audio.add(pcm)
         burst = self.gate.feed(rms, self.audio.end, len(pcm) // 2)
@@ -199,6 +219,10 @@ class LiveLoop:
             if self.paused:
                 self.frames.clear()
                 self.audio.clear()
+        elif kind == "tts.start":
+            self.mute_until = self.now() + 15
+        elif kind == "tts.end":
+            self.mute_until = self.now() + 0.3
 
     def reset(self) -> None:
         self.emit(self.home.reset())
@@ -231,8 +255,11 @@ class LiveLoop:
 
     async def tick(self) -> None:
         self._safety_effects(self.safety.tick())
+        was_unprompted = bool(self.consent.open and self.consent.open.unprompted)
         update = self.consent.tick()
         if update is not None:
+            if update.reason == "no answer" and was_unprompted:
+                self.policy.note_unanswered()
             self._consent_result(update, by="none")
         if self.paused:
             return
@@ -333,6 +360,14 @@ class LiveLoop:
                 self.emit({"type": "sense.hear", "text": f"answer: {choice}"})
                 await self._answer(choice, by="voice")
                 return
+            if choice == "other":
+                self.emit({"type": "sense.hear", "text": "answer: other"})
+                spoken = await self.perceiver.transcript(wav, self.profile)
+                text = spoken.value.transcript.strip() if isinstance(spoken.value, TranscriptRead) else ""
+                if text:
+                    question = self._replace_open_question(by="voice", said=text)
+                    self._follow_up(text, question, wav)
+                return
         read = await self.perceiver.read_sound(wav)
         if read.error or read.value is None:
             log.warning("sound read failed: %s", read.error)
@@ -366,6 +401,101 @@ class LiveLoop:
             return self.consent.open.question
         return None
 
+    def _someone_present(self) -> bool:
+        return bool(self.scene and self.scene.people)
+
+    def _say(self, turn_id: str | None, text: str, *, voice: bool) -> None:
+        text = text.strip()
+        if not text:
+            return
+        voiced = bool(voice) and self.profile.output.speech
+        say_id = self.ids("say")
+        self.says[say_id] = {"text": text, "speed": float(self.profile.output.speech_rate)}
+        while len(self.says) > 32:
+            self.says.popitem(last=False)
+        event: dict[str, Any] = {"type": "say", "text": text, "say_id": say_id, "voice": voiced}
+        if turn_id:
+            event["turn_id"] = turn_id
+        self.emit(event)
+
+    def _ask_user(
+        self,
+        turn_id: str,
+        started: float,
+        request: DecideRequest,
+        question: str,
+        choices: list[str] | None,
+    ) -> None:
+        unprompted = request.kind != "spoken"
+        if unprompted:
+            hold = self.policy.hold_reason(
+                someone_present=self._someone_present(),
+                question_open=self._open_question() is not None,
+                question=question,
+            )
+            if hold:
+                note = f"would ask: {question}, holding off"
+                self.emit({"type": "think", "turn_id": turn_id, "note": note[:160]})
+                self._end(turn_id, started, "nothing", note=hold)
+                return
+            self.policy.note_unprompted()
+        self.consent.open_instruction(question, self.profile, unprompted=unprompted)
+        self.open_turn = OpenTurn(turn_id)
+        self.emit(
+            {
+                "type": "ask",
+                "turn_id": turn_id,
+                "question": question,
+                "choices": choices or ["Yes", "No"],
+            }
+        )
+        self._say(turn_id, question, voice=True)
+        self._end(turn_id, started, "asked")
+
+    def _replace_open_question(self, *, by: str = "voice", said: str = "") -> str:
+        """Close a consent or instruction question because the person said something else."""
+        if self.safety.phase in {"checkin", "checkin_repeat"}:
+            self.policy.note_answered()
+            if self.safety_turn and said:
+                self.emit({"type": "ask.answer", "turn_id": self.safety_turn, "by": by, "choice": said[:40]})
+            return CHECKIN_TEXT
+        question = ""
+        plan = None
+        if self.consent.open is not None:
+            question = self.consent.open.question
+            plan = self.consent.open.plan
+            self.consent.open = None
+        turn = self.open_turn
+        if turn is not None and said:
+            self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by, "choice": said[:40]})
+        if plan is not None and turn is not None:
+            for call_id in turn.call_ids.values():
+                self.emit(
+                    {
+                        "type": "tool.status",
+                        "call_id": call_id,
+                        "status": "rejected",
+                        "detail": "replaced by their answer",
+                    }
+                )
+        self.open_turn = None
+        self.policy.note_answered()
+        return question
+
+    def _follow_up(self, text: str, question: str, wav: bytes | None) -> None:
+        self._request(
+            DecideRequest(
+                "spoken",
+                text[:40],
+                set(self.active_cues),
+                self.now(),
+                wav=wav,
+                utterance=text,
+                asked=question,
+                answer=text,
+            )
+        )
+
     # ---------- decide lane ----------
 
     async def _decide(self, request: DecideRequest) -> None:
@@ -387,6 +517,8 @@ class LiveLoop:
             scene=self.scene,
             cues=request.cues,
             effort=self.s.decide_effort,
+            asked=request.asked,
+            answer=request.answer,
         )
         if self.now() - request.at > self.s.stale_s:
             self._end(turn_id, started, "nothing", note="too late, dropped")
@@ -422,8 +554,11 @@ class LiveLoop:
                 self._end(turn_id, started, "nothing", note="safety check-in handles this")
             return
         if plan is None:
+            if result.asked:
+                self._ask_user(turn_id, started, request, result.asked, result.choices)
+                return
             if result.reply:
-                self.emit({"type": "say", "turn_id": turn_id, "text": result.reply})
+                self._say(turn_id, result.reply, voice=False)
             self._end(turn_id, started, "nothing", note="no tools, nothing needed")
             return
         update = self.consent.consider(plan, self.profile, transcript_clear=spoken, scene=self.scene)
@@ -479,13 +614,15 @@ class LiveLoop:
                 for call_id in turn.call_ids.values():
                     self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id if plan else None, "status": "asking"})
                 self.emit({"type": "ask", "turn_id": turn.turn_id, "question": question, "choices": ["Yes", "No"]})
-            self.emit({"type": "say", "turn_id": turn.turn_id, "text": question})
+            self._say(turn.turn_id, question, voice=True)
             return "asked"
         status = "declined" if update.status == "declined" else "rejected"
         if update.status == "declined":
             self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by or "none", "choice": "no"})
         for call_id in turn.call_ids.values():
             self.emit({"type": "tool.status", "call_id": call_id, "status": status, "detail": update.reason[:60]})
+        if status == "rejected" and update.reason and update.reason != "replaced by their answer":
+            self._say(turn.turn_id, _brief(update.reason), voice=True)
         if self.open_turn is turn:
             self.open_turn = None
         return "nothing"
@@ -496,7 +633,20 @@ class LiveLoop:
             raw = "okay" if choice in {"yes", "okay", "ok"} else "help"
             if self.safety_turn:
                 self.emit({"type": "ask.answer", "turn_id": self.safety_turn, "by": by, "choice": raw})
+            self.policy.note_answered()
             self._safety_effects(self.safety.on_answer(raw))
+            return
+        if choice == "help":
+            if self.consent.open is not None and self.consent.open.plan is not None:
+                self._replace_open_question(by=by, said="help")
+            else:
+                self.consent.open = None
+                self.open_turn = None
+                self.policy.note_answered()
+            self._safety_effects(self.safety.on_event("distress_call"), trigger="asked for help")
+            return
+        if self.consent.open is not None and self.consent.open.plan is None:
+            self._answer_instruction(choice, by=by)
             return
         if self.consent.open is None:
             return
@@ -508,10 +658,28 @@ class LiveLoop:
         else:
             update = self.consent.answer_button(yes)
         if update is not None:
+            if update.status in {"approved", "declined"}:
+                self.policy.note_answered()
             self._consent_result(update, by=by)
 
+    def _answer_instruction(self, choice: str, *, by: str) -> None:
+        question = self.consent.open.question if self.consent.open else ""
+        turn = self.open_turn
+        self.consent.open = None
+        self.open_turn = None
+        self.policy.note_answered()
+        if choice in {"no", "nope", "nah"}:
+            self.policy.note_declined_question(question)
+            if turn is not None:
+                self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by, "choice": "no"})
+            return
+        word = "yes" if choice in {"yes", "okay", "ok"} else choice
+        if turn is not None:
+            self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by, "choice": word})
+        self._follow_up(word, question, None)
+
     async def _answer_text(self, text: str, *, by: str) -> bool:
-        """Typed text answers an open question if it reads as yes, no, or help."""
+        """Typed text answers an open question, or becomes the next instruction."""
         if self._open_question() is None:
             return False
         words = text.lower().strip(" .!?")
@@ -519,7 +687,9 @@ class LiveLoop:
             if words == choice or words.startswith(choice + " "):
                 await self._answer(choice, by=by)
                 return True
-        return False
+        question = self._replace_open_question(by=by, said=text)
+        self._follow_up(text, question, None)
+        return True
 
     # ---------- doing things ----------
 
@@ -540,7 +710,7 @@ class LiveLoop:
             text = args.get("text")
             self._later(self.s.caption_s, lambda: self.home.state["caption"] == text and self.emit(self.home.clear_caption()))
         elif tool == "announce":
-            self.emit({"type": "say", "turn_id": turn_id, "text": str(args.get("text", ""))})
+            self._say(turn_id, str(args.get("text", "")), voice=True)
 
     def _later(self, seconds: float, fn: Callable[[], Any]) -> None:
         async def run() -> None:
@@ -571,9 +741,9 @@ class LiveLoop:
             if effect.kind == "alert":
                 self.emit({"type": "safety", "state": "alerted"})
             elif effect.kind in {"notify_person"} and not effect.plans:
-                self.emit({"type": "say", "turn_id": turn.turn_id, "text": effect.text})
+                self._say(turn.turn_id, effect.text, voice=True)
             elif effect.kind == "cleared":
-                self.emit({"type": "say", "turn_id": turn.turn_id, "text": effect.text})
+                self._say(turn.turn_id, effect.text, voice=True)
                 self.emit({"type": "turn.end", "turn_id": turn.turn_id, "ms": 0, "outcome": "nothing"})
                 self.emit({"type": "safety", "state": "ok"})
                 self.safety_turn = None
@@ -583,6 +753,13 @@ class LiveLoop:
         if frame is None:
             return None
         return "data:image/jpeg;base64," + base64.b64encode(frame.jpeg).decode()
+
+
+def _brief(reason: str) -> str:
+    text = reason.strip().rstrip(".")
+    if len(text) > 80:
+        text = text[:77].rstrip() + "..."
+    return text
 
 
 def _chips(scene: SceneState, cues: set[str]) -> list[str]:

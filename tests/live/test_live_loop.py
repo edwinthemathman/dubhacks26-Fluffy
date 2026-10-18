@@ -40,6 +40,9 @@ class FakePerceiver:
         self.scene = CALM
         self.sound = SoundRead(sounds=["none"], heard="quiet")
         self.answer_value = "unclear"
+        self.transcript_text = "just a little dimmer"
+        self.asked: str | None = None
+        self.choices: list[str] | None = None
         self.device: list[str] = []
         self.scene_calls = 0
         self.decide_calls: list[dict] = []
@@ -55,11 +58,21 @@ class FakePerceiver:
     async def answer(self, wav, question):
         return Read(value=self.answer_value, ms=200)
 
-    async def decide(self, window, *, profile, utterance, scene, cues, effort):
-        self.decide_calls.append({"utterance": utterance, "cues": set(cues)})
+    async def transcript(self, wav, profile):
+        from fluffy.perception.scene import TranscriptRead
+
+        return Read(value=TranscriptRead(transcript=self.transcript_text), ms=200)
+
+    async def decide(self, window, *, profile, utterance, scene, cues, effort, asked="", answer=""):
+        self.decide_calls.append({"utterance": utterance, "cues": set(cues), "asked": asked, "answer": answer})
         if self.decide_gate is not None:
             await self.decide_gate.wait()
-        return Decision(device=[parse_call(name, args) for name, args in self.device], ms=800)
+        return Decision(
+            device=[parse_call(name, args) for name, args in self.device],
+            asked=self.asked,
+            choices=self.choices,
+            ms=800,
+        )
 
 
 def dim(level: int) -> tuple[str, str]:

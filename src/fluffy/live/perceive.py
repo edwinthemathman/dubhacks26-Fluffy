@@ -17,7 +17,7 @@ from typing import Any
 from perceptron import AsyncClient, SDKError, pydantic_format, video_frames
 from perceptron import audio as audio_part
 
-from fluffy.brain.decide import _asked, _split, system_prompt
+from fluffy.brain.decide import _asked, _asked_choices, _split, system_prompt
 from fluffy.demo.analyze import (
     MODEL,
     SOUND_PROMPT,
@@ -74,6 +74,7 @@ class Read:
 class Decision:
     reply: str = ""
     asked: str | None = None
+    choices: list[str] | None = None
     device: list[ParsedCall] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
     rounds: int = 0
@@ -202,7 +203,7 @@ def labels_from_text(text: str) -> list[str]:
 
 
 async def answer_from_audio(client: AsyncClient, wav: bytes, question: str) -> Read:
-    """While a question is open: did the person answer yes, no, or ask for help?"""
+    """While a question is open: yes, no, help, or some other words?"""
     started = time.perf_counter()
     try:
         completion = await client.chat.completions.create(
@@ -218,13 +219,14 @@ async def answer_from_audio(client: AsyncClient, wav: bytes, question: str) -> R
                                 f'The person was just asked: "{question}". '
                                 "From this audio, did they answer yes, no, or ask for help? "
                                 "Groaning or crying out with no words counts as help. "
+                                "If they said something else, say other. "
                                 "If they did not answer, say unclear."
                             ),
                         },
                     ],
                 }
             ],
-            regex="yes|no|help|unclear",
+            regex="yes|no|help|other|unclear",
             reasoning_effort="none",
             max_completion_tokens=8,
             timeout=LIVE_TIMEOUT_S,
@@ -244,6 +246,8 @@ async def decide(
     cues: set[str],
     effort: str = "low",
     max_tokens: int = 512,
+    asked: str = "",
+    answer: str = "",
 ) -> Decision:
     """The decision call with tools. Only device calls from the last round count."""
     started = time.perf_counter()
@@ -254,7 +258,7 @@ async def decide(
             transcript = spoken.value.transcript.strip()
     user_text = (
         f"{LIVE_NOTE.format(seconds=window.seconds)}\n"
-        f"{_user_text(profile, utterance, scene, cues, transcript=transcript)}"
+        f"{_user_text(profile, utterance, scene, cues, transcript=transcript, asked=asked, answer=answer)}"
     )
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},
@@ -286,7 +290,10 @@ async def decide(
             ]
         )
         result.rejected.extend(bad)
-        result.asked = _asked(meta) or result.asked
+        asked_now = _asked(meta)
+        if asked_now:
+            result.asked = asked_now
+            result.choices = _asked_choices(meta)
         result.device = device
         if device or not meta or round_index == MAX_ROUNDS - 1 or completion.message is None:
             break
