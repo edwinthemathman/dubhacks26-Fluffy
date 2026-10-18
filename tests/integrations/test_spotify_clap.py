@@ -10,7 +10,7 @@ from fluffy.integrations.spotify import CLAP_ALBUM, CLAP_TRACK, play_clap_song, 
 def test_clap_song_starts_from_the_album(tmp_path, monkeypatch):
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "a", "refresh_token": "r"}))
-    monkeypatch.setattr("fluffy.integrations.spotify.TOKEN_PATH", token)
+    monkeypatch.setattr("fluffy.integrations.spotify_clap.TOKEN_PATH", token)
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "")
     seen: dict = {}
 
@@ -63,7 +63,7 @@ def test_clap_song_starts_from_the_album(tmp_path, monkeypatch):
 def test_volume_sets_the_open_player(tmp_path, monkeypatch):
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "a", "refresh_token": "r"}))
-    monkeypatch.setattr("fluffy.integrations.spotify.TOKEN_PATH", token)
+    monkeypatch.setattr("fluffy.integrations.spotify_clap.TOKEN_PATH", token)
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "")
     seen: dict = {}
 

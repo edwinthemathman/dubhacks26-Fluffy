@@ -1,0 +1,225 @@
+{
+  "$defs": {
+    "SubResult": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "title": "Channel",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "pending",
+            "failed",
+            "skipped",
+            "cancelled",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "verification": {
+          "enum": [
+            "state_committed",
+            "playback_confirmed",
+            "provider_accepted",
+            "provider_delivered",
+            "unverified"
+          ],
+          "title": "Verification",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "provider_reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Reference"
+        }
+      },
+      "required": [
+        "channel",
+        "status",
+        "verification"
+      ],
+      "title": "SubResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "tool": {
+      "title": "Tool",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "pending",
+        "failed",
+        "skipped",
+        "cancelled",
+        "unknown"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "effect_kind": {
+      "enum": [
+        "simulated_state",
+        "browser_audio",
+        "spotify",
+        "photon"
+      ],
+      "title": "Effect Kind",
+      "type": "string"
+    },
+    "verification": {
+      "enum": [
+        "state_committed",
+        "playback_confirmed",
+        "provider_accepted",
+        "provider_delivered",
+        "unverified"
+      ],
+      "title": "Verification",
+      "type": "string"
+    },
+    "previous_state": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Previous State"
+    },
+    "new_state": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "New State"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Started At"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "provider_reference": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Reference"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    },
+    "sub_results": {
+      "items": {
+        "$ref": "#/$defs/SubResult"
+      },
+      "title": "Sub Results",
+      "type": "array"
+    }
+  },
+  "required": [
+    "action_id",
+    "plan_id",
+    "session_id",
+    "tool",
+    "status",
+    "effect_kind",
+    "verification"
+  ],
+  "title": "ActionResult",
+  "type": "object"
+}

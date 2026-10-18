@@ -1,242 +1,275 @@
-"""Fall and distress check-ins. This path does not call a model.
+"""Deterministic two-check-in incident manager.
 
-```
-possible_fall | distress_call
-  check-in "Are you okay?"
-    okay / YES / nod  -> cancel, watch for 5 min
-    help / NEED HELP / shake / no -> alert the caregiver now
-    no answer 30 s -> second check-in, louder, strobe
-    no answer 60 s -> alert the caregiver
-  tell the person the caregiver was notified
-  check in every 60 s until the caregiver acknowledges
-```
+Perception stays upstream. This machine only times questions and decides when
+one caregiver alert becomes eligible. It does not diagnose a fall.
 """
 
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
 
-from pydantic import BaseModel, Field
-
-from fluffy.clock import Clock
-from fluffy.ids import IdFactory
-from fluffy.models import Action, Consent, Evidence, Plan, Trigger, build_plan
-from fluffy.models.tool_catalog import validate_args
-from fluffy.profile.model import Profile
-
-Phase = Literal["idle", "checkin", "checkin_repeat", "alerted", "watching"]
-CHECKIN_TEXT = "Are you okay?"
-SECOND_CHECKIN_S = 30
-ALERT_S = 60
-FOLLOWUP_S = 60
-WATCH_S = 5 * 60
-PAIN_TEXT_S = 15
-
-_OKAY = {"okay", "ok", "yes", "nod", "i'm okay", "im okay", "i am okay"}
-_HELP = {"help", "need help", "shake", "no"}
+from fluffy.config import HomeConfig
+from fluffy.ids import new_id
+from fluffy.models.contracts import PossibleFallEvent
 
 
-class SafetyEffect(BaseModel):
-    kind: Literal["checkin", "alert", "notify_person", "cleared"]
-    text: str
-    speech: bool = False
-    caption: bool = False
-    light_pattern: str | None = None
-    louder: bool = False
-    plans: list[Plan] = Field(default_factory=list)
+_NOT_OKAY = re.compile(r"\bnot\s+ok(ay)?\b")
+_OKAY = re.compile(r"^(please\s+)?(i'm okay|im okay|i am okay|i'm ok|im ok|i am ok|okay)(\s+please)?$")
+_HELP = re.compile(r"^(please\s+)?(help me|i need help|help)(\s+please)?$")
 
 
-class SafetyMachine:
-    def __init__(self, clock: Clock, profile: Profile, ids: IdFactory | None = None) -> None:
-        self.clock = clock
-        self.profile = profile
-        self.ids = ids or IdFactory()
-        self.phase: Phase = "idle"
-        self.started: datetime | None = None
-        self.watch_until: datetime | None = None
-        self.next_checkin: datetime | None = None
-        self.event_kind: str | None = None
-
-    def on_event(self, kind: str) -> list[SafetyEffect]:
-        if kind not in {"possible_fall", "distress_call"}:
-            return []
-        # A fall that is still going does not start another check-in.
-        # Pain or a call for help does, even after the first incident alerted.
-        if kind == "possible_fall" and self.phase in {"checkin", "checkin_repeat", "alerted", "watching"}:
-            return []
-        if kind == "distress_call" and self.phase in {"checkin", "checkin_repeat"}:
-            return []
-        self.phase = "checkin"
-        self.started = self.clock.now()
-        self.event_kind = kind
-        self.watch_until = None
-        self.next_checkin = None
-        return [self._checkin(louder=False, pattern="pulse1")]
-
-    def on_answer(self, raw: str) -> list[SafetyEffect]:
-        answer = _classify(raw)
-        if self.phase == "alerted" and answer == "okay":
-            return self.stand_down()
-        if self.phase not in {"checkin", "checkin_repeat"}:
-            return []
-        if answer == "okay":
-            self.phase = "watching"
-            self.watch_until = self.clock.now() + timedelta(seconds=WATCH_S)
-            return [
-                SafetyEffect(
-                    kind="cleared",
-                    text="Okay. I'll keep an eye on the room.",
-                )
-            ]
-        if answer == "help":
-            return self._alert(because="the person needs help")
-        return []
-
-    def tick(self) -> list[SafetyEffect]:
-        now = self.clock.now()
-        if self.phase in {"checkin", "checkin_repeat"} and self.started is not None:
-            elapsed = (now - self.started).total_seconds()
-            if self.phase == "checkin" and elapsed >= SECOND_CHECKIN_S:
-                self.phase = "checkin_repeat"
-                return [self._checkin(louder=True, pattern="strobe")]
-            if self.phase == "checkin_repeat" and elapsed >= ALERT_S:
-                return self._alert(because="no response")
-        if self.phase == "alerted" and self.next_checkin is not None and now >= self.next_checkin:
-            self.next_checkin = now + timedelta(seconds=FOLLOWUP_S)
-            return [self._checkin(louder=False, pattern="pulse1")]
-        if self.phase == "watching" and self.watch_until is not None and now >= self.watch_until:
-            self.phase = "idle"
-            self.watch_until = None
-        return []
-
-    def acknowledge(self) -> list[SafetyEffect]:
-        if self.phase != "alerted":
-            return []
-        self.phase = "idle"
-        self.next_checkin = None
-        return [SafetyEffect(kind="cleared", text="Caregiver acknowledged.")]
-
-    def stand_down(self) -> list[SafetyEffect]:
-        """The incident is over. The next fall or pain can text again."""
-        if self.phase == "idle":
-            return []
-        self.phase = "idle"
-        self.started = None
-        self.watch_until = None
-        self.next_checkin = None
-        self.event_kind = None
-        return [SafetyEffect(kind="cleared", text="")]
-
-    def _checkin(self, *, louder: bool, pattern: str) -> SafetyEffect:
-        speech = self.profile.output.speech
-        plans = [
-            self._tool_plan(
-                "flash_lights",
-                {
-                    "room": "living_room",
-                    "color": "amber",
-                    "pattern": pattern,
-                    "duration_s": 6 if louder else 3,
-                },
-                action_class="notify",
-                intent=CHECKIN_TEXT,
-            ),
-            self._tool_plan(
-                "show_caption",
-                {"text": CHECKIN_TEXT, "size": "xl", "priority": "high"},
-                action_class="notify",
-                intent=CHECKIN_TEXT,
-            ),
-        ]
-        if speech:
-            plans.append(
-                self._tool_plan(
-                    "announce",
-                    {"text": CHECKIN_TEXT, "room": "living_room"},
-                    action_class="notify",
-                    intent=CHECKIN_TEXT,
-                )
-            )
-        return SafetyEffect(
-            kind="checkin",
-            text=CHECKIN_TEXT,
-            speech=speech,
-            caption=True,
-            light_pattern=pattern,
-            louder=louder,
-            plans=plans,
-        )
-
-    def _alert(self, *, because: str) -> list[SafetyEffect]:
-        person = self.profile.agreements.person_name
-        caregiver = self.profile.agreements.caregiver
-        if because == "no response":
-            message = f"{person} may have fallen in the living room; no response"
-        else:
-            message = f"{person} needs help in the living room"
-        told = f"{caregiver} has been notified."
-        self.phase = "alerted"
-        self.next_checkin = self.clock.now() + timedelta(seconds=FOLLOWUP_S)
-        alert = self._tool_plan(
-            "alert_caregiver",
-            {"severity": "high", "message": message, "include_snapshot": False},
-            action_class="safety",
-            intent=message,
-        )
-        speech = self.profile.output.speech
-        notify_plans = [
-            self._tool_plan(
-                "show_caption",
-                {"text": told, "size": "xl", "priority": "high"},
-                action_class="notify",
-                intent=told,
-            )
-        ]
-        if speech:
-            notify_plans.append(
-                self._tool_plan(
-                    "announce",
-                    {"text": told, "room": "living_room"},
-                    action_class="notify",
-                    intent=told,
-                )
-            )
-        return [
-            SafetyEffect(kind="alert", text=message, plans=[alert]),
-            SafetyEffect(
-                kind="notify_person",
-                text=told,
-                speech=speech,
-                caption=True,
-                plans=notify_plans,
-            ),
-        ]
-
-    def _tool_plan(self, tool: str, args: dict, *, action_class: str, intent: str):
-        checked = validate_args(tool, args)
-        given_by = "profile"
-        required = action_class == "comfort"
-        return build_plan(
-            clock=self.clock,
-            ids=self.ids,
-            trigger=Trigger(kind="safety", event=self.event_kind, room="living_room"),
-            action_class=action_class,  # type: ignore[arg-type]
-            intent=intent,
-            actions=[Action(action_id=self.ids("act"), tool=tool, args=checked)],
-            confidence=1.0,
-            consent=Consent(required=required, given_by=given_by),
-            needs=list(self.profile.needs),
-            delivered_via=self.profile.delivery_channels(safety=True),
-            reasoning_summary=intent,
-            evidence=[
-                Evidence(kind="vision", summary=self.event_kind, at=self.clock.now())
-            ],
-        )
-
-
-def _classify(raw: str) -> Literal["okay", "help"] | None:
-    text = " ".join(raw.strip().lower().split())
-    if text in _OKAY or "i'm okay" in text or "im okay" in text or "i am okay" in text:
+def classify_reply(text: str) -> str:
+    normalized = " ".join(text.strip().lower().replace("\u2019", "'").replace(".", "").split())
+    if _NOT_OKAY.search(normalized):
+        return "ambiguous"
+    if _OKAY.fullmatch(normalized):
         return "okay"
-    if text in _HELP:
+    if _HELP.fullmatch(normalized):
         return "help"
-    return None
+    return "ambiguous"
+
+
+@dataclass
+class SafetyCommand:
+    kind: str
+    incident_id: str
+    text: str = ""
+    message_id: str = ""
+    question_id: str = ""
+    severity: str = "high"
+    action_id: str = ""
+
+
+@dataclass
+class Incident:
+    incident_id: str
+    session_id: str
+    room: str
+    phase: str
+    opened_at: datetime
+    source: str
+    audio_failed: bool = False
+    question_id: str | None = None
+    question_text: str | None = None
+    message_id: str | None = None
+    window_deadline: datetime | None = None
+    speak_deadline: datetime | None = None
+    sent: bool = False
+    alert_action_id: str = ""
+    answers: list[dict] = field(default_factory=list)
+    round_index: int = 1
+
+
+class IncidentManager:
+    def __init__(self, home: HomeConfig) -> None:
+        self.home = home
+        self.incident: Incident | None = None
+        self._latched = False
+
+    def active(self) -> Incident | None:
+        if self.incident and self.incident.phase in {
+            "speaking_1",
+            "window_1",
+            "speaking_2",
+            "window_2",
+            "alert_pending",
+            "alerted",
+        }:
+            return self.incident
+        return self.incident if self.incident and self.incident.phase == "alerted" else None
+
+    def open_possible_fall(self, event: PossibleFallEvent, now: datetime) -> list[SafetyCommand]:
+        gap = (event.floor_at - event.descent_at).total_seconds()
+        if gap < 2:
+            return []
+        if event.source not in {"inference", "developer", "fixture"}:
+            return []
+        return self._open(event.session_id, event.room, event.source, now)
+
+    def open_help_request(self, session_id: str, room: str, now: datetime, source: str) -> list[SafetyCommand]:
+        if self.incident and self.incident.phase == "alert_pending":
+            return []
+        if self.incident and self.incident.phase in {"speaking_1", "window_1", "speaking_2", "window_2"}:
+            return self._escalate_now(now, reason="help")
+        if self.incident and self.incident.phase not in {"resolved_ok", "cancelled", "idle"}:
+            return []
+        incident = Incident(
+            incident_id=new_id("inc"),
+            session_id=session_id,
+            room=room,
+            phase="alert_pending",
+            opened_at=now,
+            source=source,
+            alert_action_id=new_id("act"),
+        )
+        self.incident = incident
+        self._latched = True
+        return [self._stop(), *self._escalate_now(now, reason="help")]
+
+    def _open(self, session_id: str, room: str, source: str, now: datetime) -> list[SafetyCommand]:
+        if self._latched and self.incident and self.incident.phase not in {"resolved_ok", "cancelled"}:
+            return []
+        if self.incident and self.incident.phase not in {"resolved_ok", "cancelled", "idle"}:
+            return []
+        incident = Incident(
+            incident_id=new_id("inc"),
+            session_id=session_id,
+            room=room,
+            phase="speaking_1",
+            opened_at=now,
+            source=source,
+            alert_action_id=new_id("act"),
+        )
+        self.incident = incident
+        self._latched = True
+        return [self._stop(), *self._ask(incident, 1, now)]
+
+    def _stop(self) -> SafetyCommand:
+        assert self.incident is not None
+        return SafetyCommand(kind="stop_sound", incident_id=self.incident.incident_id)
+
+    def _ask(self, incident: Incident, round_index: int, now: datetime) -> list[SafetyCommand]:
+        text = self.home.checkin_1 if round_index == 1 else self.home.checkin_2
+        question_id = new_id("qst")
+        message_id = new_id("msg")
+        incident.round_index = round_index
+        incident.question_id = question_id
+        incident.question_text = text
+        incident.message_id = message_id
+        incident.phase = "speaking_1" if round_index == 1 else "speaking_2"
+        incident.window_deadline = None
+        incident.speak_deadline = now + timedelta(seconds=self.home.speech_total_cap_s)
+        return [
+            SafetyCommand(
+                kind="announce",
+                incident_id=incident.incident_id,
+                text=text,
+                message_id=message_id,
+                question_id=question_id,
+            )
+        ]
+
+    def on_playback_ended(self, message_id: str, now: datetime) -> None:
+        incident = self.incident
+        if incident is None or incident.message_id != message_id:
+            return
+        if incident.phase == "speaking_1":
+            incident.phase = "window_1"
+        elif incident.phase == "speaking_2":
+            incident.phase = "window_2"
+        else:
+            return
+        incident.window_deadline = now + timedelta(seconds=self.home.safety_window_s)
+
+    def on_audio_unavailable(self, message_id: str, now: datetime) -> None:
+        incident = self.incident
+        if incident is None or incident.message_id != message_id:
+            return
+        incident.audio_failed = True
+        self.on_playback_ended(message_id, now)
+
+    def poll(self, now: datetime) -> list[SafetyCommand]:
+        incident = self.incident
+        if incident is None:
+            return []
+        if incident.phase in {"speaking_1", "speaking_2"} and incident.speak_deadline and now >= incident.speak_deadline:
+            self.on_audio_unavailable(incident.message_id or "", now)
+        if incident.phase == "window_1" and incident.window_deadline and now >= incident.window_deadline:
+            return self._ask(incident, 2, now)
+        if incident.phase == "window_2" and incident.window_deadline and now >= incident.window_deadline:
+            return self._escalate_now(now, reason="timeout")
+        return []
+
+    def answer(self, question_id: str, text: str | None, button: str | None, now: datetime) -> list[SafetyCommand]:
+        incident = self.incident
+        if incident is None or incident.question_id != question_id:
+            return []
+        if incident.phase not in {"speaking_1", "window_1", "speaking_2", "window_2"}:
+            return []
+        label = button or ""
+        if label in {"im_okay", "okay"}:
+            kind = "okay"
+        elif label in {"need_help", "help"}:
+            kind = "help"
+        elif text:
+            kind = classify_reply(text)
+        else:
+            kind = "ambiguous"
+        incident.answers.append({"at": now.isoformat(), "kind": kind, "question_id": question_id})
+        if kind == "okay":
+            incident.phase = "resolved_ok"
+            incident.window_deadline = None
+            self._latched = False
+            return [SafetyCommand(kind="resolved", incident_id=incident.incident_id, text="Check-in resolved.")]
+        if kind == "help":
+            return self._escalate_now(now, reason="help")
+        return []
+
+    def _escalate_now(self, now: datetime, reason: str) -> list[SafetyCommand]:
+        incident = self.incident
+        if incident is None or incident.sent or incident.phase in {"alerted", "resolved_ok", "cancelled"}:
+            return []
+        incident.phase = "alert_pending"
+        message = self.home.alert_template
+        if incident.audio_failed:
+            message = f"{message} {self.home.audio_failure_note}"
+        return [
+            SafetyCommand(
+                kind="alert",
+                incident_id=incident.incident_id,
+                text=message,
+                severity="high",
+                action_id=incident.alert_action_id,
+                question_id=reason,
+            )
+        ]
+
+    def claim_send(self, incident_id: str) -> bool:
+        incident = self.incident
+        if incident is None or incident.incident_id != incident_id:
+            return False
+        if incident.sent or incident.phase != "alert_pending":
+            return False
+        incident.sent = True
+        incident.phase = "alerted"
+        return True
+
+    def mark_submitted(self, already: bool = True) -> str:
+        incident = self.incident
+        if incident is None:
+            return "no incident"
+        if incident.phase == "alerted" or incident.sent:
+            return "the message has already been submitted"
+        if not already:
+            incident.phase = "cancelled"
+            self._latched = False
+        return "cancelled before send"
+
+    def pause_sensing(self) -> str:
+        incident = self.incident
+        if incident is None:
+            return "monitoring is stopped"
+        if incident.sent or incident.phase == "alerted":
+            return "the message has already been submitted"
+        incident.phase = "cancelled"
+        incident.window_deadline = None
+        self._latched = False
+        return "monitoring has stopped"
+
+    def note_provider_result(self, status: str) -> None:
+        incident = self.incident
+        if incident is None:
+            return
+        if status in {"accepted", "delivered", "unknown", "failed"}:
+            incident.phase = "alerted" if status != "failed" else "alerted"
+            incident.sent = status != "failed"
+
+
+from fluffy.brain.safety_legacy import (  # noqa: E402
+    CHECKIN_TEXT,
+    PAIN_TEXT_S,
+    SafetyEffect,
+    SafetyMachine,
+)

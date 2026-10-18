@@ -1,333 +1,14 @@
 {
   "$defs": {
-    "Action": {
-      "additionalProperties": false,
-      "properties": {
-        "action_id": {
-          "pattern": "^act_[A-Za-z0-9_-]+$",
-          "title": "Action Id",
-          "type": "string"
-        },
-        "tool": {
-          "title": "Tool",
-          "type": "string"
-        },
-        "args": {
-          "additionalProperties": true,
-          "title": "Args",
-          "type": "object"
-        }
-      },
-      "required": [
-        "action_id",
-        "tool",
-        "args"
-      ],
-      "title": "Action",
-      "type": "object"
-    },
-    "ActionResult": {
-      "additionalProperties": false,
-      "properties": {
-        "action_id": {
-          "title": "Action Id",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "ok",
-            "error",
-            "skipped"
-          ],
-          "title": "Status",
-          "type": "string"
-        },
-        "error": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Error"
-        },
-        "previous_state": {
-          "additionalProperties": true,
-          "title": "Previous State",
-          "type": "object"
-        },
-        "new_state": {
-          "additionalProperties": true,
-          "title": "New State",
-          "type": "object"
-        }
-      },
-      "required": [
-        "action_id",
-        "status",
-        "previous_state",
-        "new_state"
-      ],
-      "title": "ActionResult",
-      "type": "object"
-    },
-    "CaregiverAlert": {
-      "additionalProperties": false,
-      "description": "A mock alert. This subsystem never attaches a snapshot image.",
-      "properties": {
-        "alert_id": {
-          "title": "Alert Id",
-          "type": "string"
-        },
-        "severity": {
-          "enum": [
-            "info",
-            "high"
-          ],
-          "title": "Severity",
-          "type": "string"
-        },
-        "message": {
-          "title": "Message",
-          "type": "string"
-        },
-        "include_snapshot": {
-          "default": false,
-          "title": "Include Snapshot",
-          "type": "boolean"
-        },
-        "snapshot": {
-          "default": null,
-          "title": "Snapshot",
-          "type": "null"
-        },
-        "acknowledged": {
-          "title": "Acknowledged",
-          "type": "boolean"
-        },
-        "acknowledged_at": {
-          "anyOf": [
-            {
-              "format": "date-time",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Acknowledged At"
-        },
-        "created_at": {
-          "format": "date-time",
-          "title": "Created At",
-          "type": "string"
-        },
-        "source": {
-          "title": "Source",
-          "type": "string"
-        }
-      },
-      "required": [
-        "alert_id",
-        "severity",
-        "message",
-        "acknowledged",
-        "created_at",
-        "source"
-      ],
-      "title": "CaregiverAlert",
-      "type": "object"
-    },
-    "CaregiverAlertMessage": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "caregiver.alert",
-          "default": "caregiver.alert",
-          "title": "Type",
-          "type": "string"
-        },
-        "plan_id": {
-          "title": "Plan Id",
-          "type": "string"
-        },
-        "alert": {
-          "$ref": "#/$defs/CaregiverAlert"
-        }
-      },
-      "required": [
-        "plan_id",
-        "alert"
-      ],
-      "title": "CaregiverAlertMessage",
-      "type": "object"
-    },
-    "Consent": {
-      "additionalProperties": false,
-      "properties": {
-        "required": {
-          "title": "Required",
-          "type": "boolean"
-        },
-        "given_by": {
-          "anyOf": [
-            {
-              "enum": [
-                "nod",
-                "voice",
-                "button",
-                "typing",
-                "spoken_request",
-                "profile"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Given By"
-        },
-        "at": {
-          "anyOf": [
-            {
-              "format": "date-time",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "At"
-        },
-        "question": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Question"
-        }
-      },
-      "required": [
-        "required"
-      ],
-      "title": "Consent",
-      "type": "object"
-    },
-    "Evidence": {
-      "additionalProperties": true,
-      "description": "Evidence is open beyond ``kind`` so Part 2 can attach its own fields.",
-      "properties": {
-        "kind": {
-          "enum": [
-            "speech",
-            "vision",
-            "sound",
-            "state"
-          ],
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "title": "Evidence",
-      "type": "object"
-    },
-    "ExecutorStatus": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "executor.status",
-          "default": "executor.status",
-          "title": "Type",
-          "type": "string"
-        },
-        "connected": {
-          "title": "Connected",
-          "type": "boolean"
-        },
-        "status": {
-          "title": "Status",
-          "type": "string"
-        },
-        "name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Name"
-        },
-        "version": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Version"
-        }
-      },
-      "required": [
-        "connected",
-        "status"
-      ],
-      "title": "ExecutorStatus",
-      "type": "object"
-    },
-    "Hello": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "hello",
-          "default": "hello",
-          "title": "Type",
-          "type": "string"
-        },
-        "name": {
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "version": {
-          "minLength": 1,
-          "title": "Version",
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "version"
-      ],
-      "title": "Hello",
-      "type": "object"
-    },
     "Plan": {
       "additionalProperties": false,
       "properties": {
         "plan_id": {
-          "pattern": "^pln_[A-Za-z0-9_-]+$",
           "title": "Plan Id",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
           "type": "string"
         },
         "created_at": {
@@ -343,6 +24,63 @@
         "trigger": {
           "$ref": "#/$defs/Trigger"
         },
+        "intent": {
+          "title": "Intent",
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/PlanAction"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "authorization_id": {
+          "title": "Authorization Id",
+          "type": "string"
+        },
+        "reasoning_summary": {
+          "title": "Reasoning Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "session_id",
+        "created_at",
+        "expires_at",
+        "trigger",
+        "intent",
+        "actions",
+        "authorization_id",
+        "reasoning_summary"
+      ],
+      "title": "Plan",
+      "type": "object"
+    },
+    "PlanAction": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
         "action_class": {
           "enum": [
             "comfort",
@@ -351,202 +89,16 @@
           ],
           "title": "Action Class",
           "type": "string"
-        },
-        "intent": {
-          "minLength": 1,
-          "title": "Intent",
-          "type": "string"
-        },
-        "actions": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "minItems": 1,
-          "title": "Actions",
-          "type": "array"
-        },
-        "confidence": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Confidence",
-          "type": "number"
-        },
-        "consent": {
-          "$ref": "#/$defs/Consent"
-        },
-        "profile": {
-          "$ref": "#/$defs/PlanProfile"
-        },
-        "reasoning_summary": {
-          "default": "",
-          "title": "Reasoning Summary",
-          "type": "string"
-        },
-        "evidence": {
-          "items": {
-            "$ref": "#/$defs/Evidence"
-          },
-          "title": "Evidence",
-          "type": "array"
         }
       },
       "required": [
-        "plan_id",
-        "created_at",
-        "expires_at",
-        "trigger",
-        "action_class",
-        "intent",
-        "actions",
-        "confidence",
-        "consent"
+        "action_id",
+        "tool",
+        "args",
+        "evidence_ids",
+        "action_class"
       ],
-      "title": "Plan",
-      "type": "object"
-    },
-    "PlanCancel": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "plan.cancel",
-          "default": "plan.cancel",
-          "title": "Type",
-          "type": "string"
-        },
-        "plan_id": {
-          "title": "Plan Id",
-          "type": "string"
-        },
-        "reason": {
-          "minLength": 1,
-          "title": "Reason",
-          "type": "string"
-        }
-      },
-      "required": [
-        "plan_id",
-        "reason"
-      ],
-      "title": "PlanCancel",
-      "type": "object"
-    },
-    "PlanDecision": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "plan.decision",
-          "default": "plan.decision",
-          "title": "Type",
-          "type": "string"
-        },
-        "plan_id": {
-          "title": "Plan Id",
-          "type": "string"
-        },
-        "decision": {
-          "enum": [
-            "approved",
-            "rejected"
-          ],
-          "title": "Decision",
-          "type": "string"
-        },
-        "reason": {
-          "minLength": 1,
-          "title": "Reason",
-          "type": "string"
-        }
-      },
-      "required": [
-        "plan_id",
-        "decision",
-        "reason"
-      ],
-      "title": "PlanDecision",
-      "type": "object"
-    },
-    "PlanProfile": {
-      "additionalProperties": false,
-      "properties": {
-        "needs": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Needs",
-          "type": "array"
-        },
-        "delivered_via": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Delivered Via",
-          "type": "array"
-        }
-      },
-      "title": "PlanProfile",
-      "type": "object"
-    },
-    "PlanProposed": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "plan.proposed",
-          "default": "plan.proposed",
-          "title": "Type",
-          "type": "string"
-        },
-        "schema_version": {
-          "const": "1.0",
-          "default": "1.0",
-          "title": "Schema Version",
-          "type": "string"
-        },
-        "plan": {
-          "$ref": "#/$defs/Plan"
-        }
-      },
-      "required": [
-        "plan"
-      ],
-      "title": "PlanProposed",
-      "type": "object"
-    },
-    "PlanResult": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "plan.result",
-          "default": "plan.result",
-          "title": "Type",
-          "type": "string"
-        },
-        "plan_id": {
-          "title": "Plan Id",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "succeeded",
-            "partial",
-            "failed"
-          ],
-          "title": "Status",
-          "type": "string"
-        },
-        "action_results": {
-          "items": {
-            "$ref": "#/$defs/ActionResult"
-          },
-          "title": "Action Results",
-          "type": "array"
-        }
-      },
-      "required": [
-        "plan_id",
-        "status",
-        "action_results"
-      ],
-      "title": "PlanResult",
+      "title": "PlanAction",
       "type": "object"
     },
     "Trigger": {
@@ -554,25 +106,14 @@
       "properties": {
         "kind": {
           "enum": [
-            "spoken",
-            "inferred",
             "sound",
-            "safety"
+            "speech",
+            "vision",
+            "safety",
+            "developer"
           ],
           "title": "Kind",
           "type": "string"
-        },
-        "utterance": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Utterance"
         },
         "event": {
           "anyOf": [
@@ -597,6 +138,18 @@
           ],
           "default": null,
           "title": "Room"
+        },
+        "utterance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Utterance"
         }
       },
       "required": [
@@ -606,30 +159,27 @@
       "type": "object"
     }
   },
-  "anyOf": [
-    {
-      "$ref": "#/$defs/PlanProposed"
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "const": "plan.proposed",
+      "default": "plan.proposed",
+      "title": "Type",
+      "type": "string"
     },
-    {
-      "$ref": "#/$defs/PlanDecision"
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
     },
-    {
-      "$ref": "#/$defs/PlanResult"
-    },
-    {
-      "$ref": "#/$defs/PlanCancel"
-    },
-    {
-      "$ref": "#/$defs/ExecutorStatus"
-    },
-    {
-      "$ref": "#/$defs/CaregiverAlertMessage"
-    },
-    {
-      "$ref": "#/$defs/Hello"
+    "plan": {
+      "$ref": "#/$defs/Plan"
     }
+  },
+  "required": [
+    "plan"
   ],
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "FluffyExecutorLink",
-  "description": "Messages for the executor link, the UI stream, and the caregiver channel. A plan expires 30 seconds after created_at if it has not been decided."
+  "title": "PlanProposed",
+  "type": "object"
 }

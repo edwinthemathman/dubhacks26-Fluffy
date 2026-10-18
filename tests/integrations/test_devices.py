@@ -10,7 +10,7 @@ from fluffy.brain.consent import ConsentManager
 from fluffy.clock import FrozenClock
 from fluffy.ids import IdFactory
 from fluffy.integrations import run_tool
-from fluffy.integrations.spotify import Spotify
+from fluffy.integrations.spotify_legacy import Spotify
 from fluffy.models import Action, Consent, Trigger, build_plan
 from fluffy.models.tool_catalog import ToolError, parse_call
 from fluffy.notify import photon

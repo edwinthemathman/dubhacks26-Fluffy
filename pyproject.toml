@@ -1,13 +1,13 @@
 [project]
 name = "fluffy"
-version = "0.1.0"
-description = "Fluffy: the live companion decides, and the execution harness applies approved plans."
+version = "0.2.0"
+description = "Fluffy: the live companion decides, and the unified harness applies approved plans."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "httpx>=0.27",
     "perceptron>=0.4.0",
-    "pydantic>=2.6",
+    "pydantic>=2.9",
     "python-dotenv>=1.0",
     "python-multipart>=0.0.12",
     "uvicorn>=0.32",
@@ -45,3 +45,4 @@ include = ["fluffy*", "mockhome*", "executor_stub*"]
 asyncio_mode = "auto"
 pythonpath = [".", "src"]
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"

@@ -12,4 +12,9 @@ node_modules/
 .mypy_cache/
 .ruff_cache/
 
+# Local secrets and provider token caches. Example files stay tracked.
+.env.*
+!.env.example
 .spotify_token
+data/spotify_oauth.json
+data/*.sqlite

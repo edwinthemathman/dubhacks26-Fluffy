@@ -1,378 +1,354 @@
-"""Spotify playback for plans, and the one-shot clap song.
+"""Spotify Authorization Code flow and Web API playback.
 
-A play request that names only the track URI returns success and then leaves
-the player empty. Starting the track's album and seeking to that track is
-what actually starts audio.
+Tokens stay on the server. The adapter never switches devices by itself.
 """
 
 from __future__ import annotations
 
 import json
-import os
+import secrets
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
-from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[3]
-TOKEN_PATH = ROOT / ".spotify_token"
+from fluffy.config import IntegrationsConfig
+
+SCOPES = "user-modify-playback-state user-read-playback-state"
+AUTH_URL = "https://accounts.spotify.com/authorize"
+TOKEN_URL = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
-ACCOUNTS = "https://accounts.spotify.com/api/token"
 
 
-class Spotify:
+class SpotifyError(Exception):
+    def __init__(self, error_code: str, message: str) -> None:
+        self.error_code = error_code
+        self.message = message
+        super().__init__(message)
+
+
+@dataclass
+class SpotifyDevice:
+    id: str
+    name: str
+    is_active: bool
+    supports_volume: bool
+
+
+@dataclass
+class PlaybackView:
+    device_id: str | None
+    track_uri: str | None
+    is_playing: bool
+    volume_percent: int | None
+    supports_volume: bool
+
+
+@dataclass
+class SpotifyOutcome:
+    status: str
+    verification: str
+    error_code: str | None = None
+    detail: str = ""
+    provider_reference: str | None = None
+    playback: PlaybackView | None = None
+
+
+@dataclass
+class SpotifyState:
+    refresh_token: str = ""
+    access_token: str = ""
+    access_expires_at: datetime | None = None
+    selected_device_id: str = ""
+    selected_device_name: str = ""
+    supports_volume: bool = False
+    verified_once: bool = False
+
+
+class SpotifyAdapter:
     def __init__(
         self,
-        *,
+        config: IntegrationsConfig,
+        token_path: Path,
         client: httpx.Client | None = None,
-        token_path: Path | None = None,
-        client_id: str | None = None,
+        poll_interval_s: float = 1.0,
     ) -> None:
-        self.client = client or httpx.Client()
-        self.token_path = token_path or TOKEN_PATH
-        self.client_id = (client_id if client_id is not None else os.environ.get("SPOTIFY_CLIENT_ID", "")).strip()
-        self._access = ""
-        self._access_until = 0.0
+        self.config = config
+        self.token_path = token_path
+        self.poll_interval_s = poll_interval_s
+        self._client = client or httpx.Client(timeout=10)
+        self.state = SpotifyState()
+        self._oauth_states: dict[str, datetime] = {}
+        self._load()
 
-    def play(self, query: str | None = None, volume: int | None = None) -> dict[str, Any]:
-        token = self._token()
-        if token is None:
-            return {"ok": False, "error": "not logged in"}
-        body: dict[str, Any] | None = None
-        track = None
-        if query and str(query).strip():
-            found = self._search(token, str(query).strip())
-            if "error" in found:
-                return found
-            track = found
-            body = {"uris": [track["uri"]]}
-        device = self._device(token)
-        if "error" in device:
-            return device
-        played = self._request(
-            "PUT",
-            f"{API}/me/player/play",
-            token,
-            params={"device_id": device["id"]},
-            json=body,
+    def _load(self) -> None:
+        if not self.token_path.exists():
+            return
+        raw = json.loads(self.token_path.read_text(encoding="utf-8"))
+        expires = raw.get("access_expires_at")
+        self.state = SpotifyState(
+            refresh_token=raw.get("refresh_token", ""),
+            access_token=raw.get("access_token", ""),
+            access_expires_at=datetime.fromisoformat(expires) if expires else None,
+            selected_device_id=raw.get("selected_device_id", ""),
+            selected_device_name=raw.get("selected_device_name", ""),
+            supports_volume=bool(raw.get("supports_volume", False)),
+            verified_once=bool(raw.get("verified_once", False)),
         )
-        if "error" in played:
-            return played
-        if volume is not None:
-            self._request("PUT", f"{API}/me/player/volume", token, params={"volume_percent": int(volume)})
-        result: dict[str, Any] = {"ok": True}
-        if track:
-            result["track"] = track["name"]
-            result["artist"] = track["artist"]
-        return result
 
-    def stop(self) -> dict[str, Any]:
-        token = self._token()
-        if token is None:
-            return {"ok": False, "error": "not logged in"}
-        paused = self._request("PUT", f"{API}/me/player/pause", token)
-        if "error" in paused:
-            return paused
-        return {"ok": True}
-
-    def _search(self, token: str, query: str) -> dict[str, Any]:
-        found = self._request("GET", f"{API}/search", token, params={"type": "track", "limit": 1, "q": query})
-        if "error" in found:
-            return found
-        items = ((found.get("body") or {}).get("tracks") or {}).get("items") or []
-        if not items:
-            return {"ok": False, "error": "no matching song"}
-        item = items[0]
-        artists = item.get("artists") or [{}]
-        return {"uri": item.get("uri"), "name": item.get("name") or query, "artist": artists[0].get("name") or ""}
-
-    def _device(self, token: str) -> dict[str, Any]:
-        listed = self._request("GET", f"{API}/me/player/devices", token)
-        if "error" in listed:
-            return listed
-        devices = (listed.get("body") or {}).get("devices") or []
-        if not devices:
-            return {"ok": False, "error": "no active Spotify device, open Spotify"}
-        chosen = next((item for item in devices if item.get("is_active")), devices[0])
-        if not chosen.get("id"):
-            return {"ok": False, "error": "no active Spotify device, open Spotify"}
-        return {"id": chosen["id"]}
-
-    def _token(self) -> str | None:
-        now = time.time()
-        if self._access and now < self._access_until - 30:
-            return self._access
-        if not self.token_path.is_file():
-            return None
-        try:
-            saved = json.loads(self.token_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return None
-        if not isinstance(saved, dict):
-            return None
-        if saved.get("access_token") and float(saved.get("expires_at") or 0) > now + 30:
-            self._access = str(saved["access_token"])
-            self._access_until = float(saved["expires_at"])
-            return self._access
-        refresh = str(saved.get("refresh_token") or "")
-        if not refresh or not self.client_id:
-            return None
-        response = self.client.post(
-            ACCOUNTS,
-            data={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": self.client_id},
-            timeout=15,
-        )
-        if response.status_code >= 400:
-            return None
-        payload = response.json()
-        self._access = str(payload.get("access_token") or "")
-        self._access_until = now + float(payload.get("expires_in") or 3600)
-        return self._access or None
-
-    def _request(self, method: str, url: str, token: str, **kwargs: Any) -> dict[str, Any]:
-        try:
-            response = self.client.request(
-                method,
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=15,
-                **kwargs,
-            )
-        except httpx.HTTPError:
-            return {"ok": False, "error": "not logged in"}
-        if response.status_code in {401, 403}:
-            if response.status_code == 401 and "premium" not in response.text.lower():
-                return {"ok": False, "error": "not logged in"}
-            return {"ok": False, "error": "Spotify Premium required"}
-        if response.status_code >= 400:
-            return {"ok": False, "error": "no active Spotify device, open Spotify"}
-        if not response.content:
-            return {"ok": True, "body": {}}
-        try:
-            body = response.json()
-        except json.JSONDecodeError:
-            body = {}
-        return {"ok": True, "body": body if isinstance(body, dict) else {}}
-
-
-# Should I Stay or Should I Go - Remastered, The Clash, on the album that
-# starts playback on this account.
-CLAP_TRACK = "spotify:track:6SjbzGo7arjfM5cXpXhc5B"
-CLAP_ALBUM = "spotify:album:0CTCk1eshEadFqZ4NBfe9N"
-CLAP_TITLE = "Should I Stay or Should I Go - Remastered"
-CLAP_ARTIST = "The Clash"
-
-
-def play_clap_song(client: httpx.Client | None = None) -> dict[str, Any]:
-    """Start the clap song. `ok` is true only after the player reports it playing."""
-    own = client is None
-    if own:
-        load_dotenv(ROOT / ".env")
-        client = httpx.Client(timeout=15)
-    assert client is not None
-    try:
-        token = _load_token()
-        if token is None:
-            return _miss("not logged in")
-        client_id = os.environ.get("SPOTIFY_CLIENT_ID", "")
-        token = _refresh(client, token, client_id)
-        headers = {"Authorization": f"Bearer {token['access_token']}"}
-        devices = client.get(f"{API}/me/player/devices", headers=headers)
-        if devices.status_code == 401:
-            return _miss("not logged in")
-        if devices.status_code != 200:
-            return _miss(f"could not list devices ({devices.status_code})")
-        device = _pick_device(devices.json().get("devices") or [])
-        if device is None:
-            return _miss("no active Spotify device, open Spotify")
-        already = _now_playing(client, headers)
-        if already is not None:
-            _repeat_off(client, headers)
-            return already
-        body = {"context_uri": CLAP_ALBUM, "offset": {"uri": CLAP_TRACK}, "position_ms": 0}
-        play = client.put(
-            f"{API}/me/player/play",
-            params={"device_id": device["id"]},
-            headers=headers,
-            json=body,
-        )
-        if play.status_code not in (202, 204):
-            return _miss(_spotify_error(play))
-        check = client.get(f"{API}/me/player", headers=headers)
-        if check.status_code != 200:
-            return _miss("Spotify did not start the song")
-        player = check.json()
-        item = player.get("item") or {}
-        name = item.get("name") or ""
-        if not player.get("is_playing") or "Should I Stay" not in name:
-            return _miss("Spotify did not start the song")
-        _repeat_off(client, headers)
-        artists = ", ".join(a.get("name", "") for a in item.get("artists") or []) or CLAP_ARTIST
-        device_info = player.get("device") or {}
-        return {
-            "ok": True,
-            "track": name,
-            "artist": artists,
-            "device": device.get("name") or "",
-            "volume": device_info.get("volume_percent"),
-            "error": "",
+    def _save(self) -> None:
+        self.token_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "refresh_token": self.state.refresh_token,
+            "access_token": self.state.access_token,
+            "access_expires_at": self.state.access_expires_at.isoformat() if self.state.access_expires_at else None,
+            "selected_device_id": self.state.selected_device_id,
+            "selected_device_name": self.state.selected_device_name,
+            "supports_volume": self.state.supports_volume,
+            "verified_once": self.state.verified_once,
         }
-    except httpx.HTTPError as exc:
-        return _miss(str(exc))
-    finally:
-        if own:
-            client.close()
+        self.token_path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def readiness(self) -> tuple[str, str]:
+        if not self.config.spotify_configured:
+            return "unavailable", "Spotify client id and secret are not set"
+        if not self.state.refresh_token:
+            return "needs_authorization", "Connect Spotify to grant playback permission"
+        if not self.state.selected_device_id:
+            return "configured", "Authorized. Select the demo device before playback."
+        if self.state.verified_once:
+            return "ready", f"Device {self.state.selected_device_name or self.state.selected_device_id} selected"
+        return "configured", "Device selected. Playback has not been verified yet."
 
-def _now_playing(client: httpx.Client, headers: dict[str, str]) -> dict[str, Any] | None:
-    """The clap song if it is already playing. A second play would start it over."""
-    check = client.get(f"{API}/me/player", headers=headers)
-    if check.status_code != 200 or not check.content:
-        return None
-    player = check.json()
-    item = player.get("item") or {}
-    name = item.get("name") or ""
-    if not player.get("is_playing") or "Should I Stay" not in name:
-        return None
-    artists = ", ".join(a.get("name", "") for a in item.get("artists") or []) or CLAP_ARTIST
-    device_info = player.get("device") or {}
-    return {
-        "ok": True,
-        "track": name,
-        "artist": artists,
-        "device": device_info.get("name") or "",
-        "volume": device_info.get("volume_percent"),
-        "error": "",
-    }
-
-
-def _repeat_off(client: httpx.Client, headers: dict[str, str]) -> None:
-    """One play-through. Spotify must not loop the song or its album."""
-    try:
-        client.put(f"{API}/me/player/repeat", params={"state": "off"}, headers=headers)
-    except httpx.HTTPError:
-        return
-
-
-def pause_playback(client: httpx.Client | None = None) -> dict[str, Any]:
-    """Pause whatever is playing on the open Spotify device."""
-    own = client is None
-    if own:
-        load_dotenv(ROOT / ".env")
-        client = httpx.Client(timeout=15)
-    assert client is not None
-    try:
-        headers, error = _headers(client)
-        if headers is None:
-            return {"ok": False, "error": error}
-        response = client.put(f"{API}/me/player/pause", headers=headers)
-        if response.status_code == 401:
-            return {"ok": False, "error": "not logged in"}
-        if response.status_code not in (202, 204):
-            return {"ok": False, "error": _spotify_error(response)}
-        return {"ok": True, "error": ""}
-    except httpx.HTTPError as exc:
-        return {"ok": False, "error": str(exc)}
-    finally:
-        if own:
-            client.close()
-
-
-def set_volume(percent: int, client: httpx.Client | None = None) -> dict[str, Any]:
-    """Set the open Spotify device's volume. 0 is mute, 100 is full."""
-    level = max(0, min(100, int(percent)))
-    own = client is None
-    if own:
-        load_dotenv(ROOT / ".env")
-        client = httpx.Client(timeout=15)
-    assert client is not None
-    try:
-        headers, error = _headers(client)
-        if headers is None:
-            return {"ok": False, "volume": level, "error": error}
-        response = client.put(
-            f"{API}/me/player/volume",
-            params={"volume_percent": level},
-            headers=headers,
+    def begin_oauth(self, now: datetime) -> str:
+        if not self.config.spotify_configured:
+            raise SpotifyError("spotify_not_configured", "Spotify client credentials are not set")
+        state = secrets.token_urlsafe(24)
+        self._oauth_states[state] = now + timedelta(minutes=10)
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": self.config.spotify_client_id,
+                "scope": SCOPES,
+                "redirect_uri": self.config.spotify_redirect_uri,
+                "state": state,
+            }
         )
-        if response.status_code == 401:
-            return {"ok": False, "volume": level, "error": "not logged in"}
-        if response.status_code not in (202, 204):
-            return {"ok": False, "volume": level, "error": _spotify_error(response)}
-        return {"ok": True, "volume": level, "error": ""}
-    except httpx.HTTPError as exc:
-        return {"ok": False, "volume": level, "error": str(exc)}
-    finally:
-        if own:
-            client.close()
+        return f"{AUTH_URL}?{query}"
 
+    def exchange_code(self, code: str, state: str, now: datetime) -> None:
+        expires = self._oauth_states.pop(state, None)
+        if expires is None or expires < now:
+            raise SpotifyError("spotify_needs_authorization", "OAuth state is missing or expired")
+        response = self._token_request(
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": self.config.spotify_redirect_uri,
+            }
+        )
+        self._store_token_response(response, now)
 
-def _headers(client: httpx.Client) -> tuple[dict[str, str] | None, str]:
-    token = _load_token()
-    if token is None:
-        return None, "not logged in"
-    token = _refresh(client, token, os.environ.get("SPOTIFY_CLIENT_ID", ""))
-    return {"Authorization": f"Bearer {token['access_token']}"}, ""
+    def list_devices(self) -> list[SpotifyDevice]:
+        payload = self._api("GET", "/me/player/devices")
+        devices = []
+        for item in payload.get("devices", []):
+            devices.append(
+                SpotifyDevice(
+                    id=item.get("id") or "",
+                    name=item.get("name") or "Spotify device",
+                    is_active=bool(item.get("is_active")),
+                    supports_volume=bool(item.get("supports_volume", False)),
+                )
+            )
+        return [device for device in devices if device.id]
 
+    def select_device(self, device_id: str) -> SpotifyDevice:
+        match = next((device for device in self.list_devices() if device.id == device_id), None)
+        if match is None:
+            raise SpotifyError("spotify_no_device", "That device is not on the account")
+        self.state.selected_device_id = match.id
+        self.state.selected_device_name = match.name
+        self.state.supports_volume = match.supports_volume
+        self._save()
+        return match
 
-def _miss(error: str) -> dict[str, Any]:
-    return {"ok": False, "track": CLAP_TITLE, "artist": CLAP_ARTIST, "device": "", "error": error}
+    def play(self, uri: str) -> SpotifyOutcome:
+        device = self._require_device()
+        try:
+            self._api(
+                "PUT",
+                "/me/player/play",
+                params={"device_id": device},
+                json={"uris": [uri]},
+            )
+        except SpotifyError as exc:
+            return SpotifyOutcome("failed", "unverified", exc.error_code, exc.message)
+        playback = self._confirm(lambda view: view.is_playing and view.track_uri == uri and view.device_id == device)
+        if playback is None:
+            return SpotifyOutcome(
+                "unknown",
+                "unverified",
+                "spotify_unverified",
+                "Spotify did not confirm the track is playing on the selected device",
+            )
+        self.state.verified_once = True
+        self._save()
+        return SpotifyOutcome("succeeded", "playback_confirmed", playback=playback, provider_reference=uri)
 
+    def pause(self) -> SpotifyOutcome:
+        device = self._require_device()
+        try:
+            self._api("PUT", "/me/player/pause", params={"device_id": device})
+        except SpotifyError as exc:
+            if exc.error_code == "spotify_connection_error":
+                return SpotifyOutcome("unknown", "unverified", exc.error_code, exc.message)
+            return SpotifyOutcome("failed", "unverified", exc.error_code, exc.message)
+        playback = self._confirm(lambda view: view.device_id == device and not view.is_playing)
+        if playback is None:
+            return SpotifyOutcome("unknown", "unverified", "spotify_unverified", "Pause was not confirmed")
+        return SpotifyOutcome("succeeded", "playback_confirmed", playback=playback)
 
-def _load_token() -> dict[str, Any] | None:
-    if not TOKEN_PATH.exists():
+    def set_volume(self, volume: int) -> SpotifyOutcome:
+        device = self._require_device()
+        if not self.state.supports_volume:
+            return SpotifyOutcome("failed", "unverified", "volume_unsupported", "Selected device does not support volume")
+        try:
+            self._api(
+                "PUT",
+                "/me/player/volume",
+                params={"volume_percent": volume, "device_id": device},
+            )
+        except SpotifyError as exc:
+            return SpotifyOutcome("failed", "unverified", exc.error_code, exc.message)
+        playback = self._confirm(lambda view: view.volume_percent == volume and view.device_id == device)
+        if playback is None:
+            return SpotifyOutcome("unknown", "unverified", "spotify_unverified", "Volume was not confirmed")
+        return SpotifyOutcome("succeeded", "playback_confirmed", playback=playback)
+
+    def current(self) -> PlaybackView | None:
+        try:
+            payload = self._api("GET", "/me/player")
+        except SpotifyError:
+            return None
+        if not payload:
+            return None
+        return _view(payload)
+
+    def _require_device(self) -> str:
+        if not self.config.spotify_configured:
+            raise SpotifyError("spotify_not_configured", "Spotify is not configured")
+        if not self.state.refresh_token:
+            raise SpotifyError("spotify_needs_authorization", "Spotify is not authorized")
+        if not self.state.selected_device_id:
+            raise SpotifyError("spotify_no_device", "No Spotify device is selected")
+        return self.state.selected_device_id
+
+    def _confirm(self, predicate, attempts: int = 3) -> PlaybackView | None:
+        for index in range(attempts):
+            view = self.current()
+            if view and predicate(view):
+                return view
+            if index < attempts - 1 and self.poll_interval_s:
+                time.sleep(self.poll_interval_s)
         return None
-    data = json.loads(TOKEN_PATH.read_text())
-    if not data.get("access_token") or not data.get("refresh_token"):
-        return None
-    return data
+
+    def _api(self, method: str, path: str, params: dict | None = None, json: dict | None = None, retried: bool = False) -> dict:
+        token = self._access_token()
+        try:
+            response = self._client.request(
+                method,
+                f"{API}{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+                json=json,
+            )
+        except httpx.TimeoutException as exc:
+            raise SpotifyError("spotify_connection_error", "Spotify request timed out") from exc
+        except httpx.HTTPError as exc:
+            raise SpotifyError("spotify_connection_error", "Spotify connection failed") from exc
+        if response.status_code == 401 and not retried:
+            self._refresh(datetime.now(timezone.utc))
+            return self._api(method, path, params, json, retried=True)
+        if response.status_code == 429:
+            raise SpotifyError("spotify_rate_limited", "Spotify rate limit")
+        if response.status_code == 404:
+            raise SpotifyError("spotify_no_device", "Spotify device or player is unavailable")
+        if response.status_code == 403:
+            raise SpotifyError("spotify_missing_scope", "Spotify token is missing a playback scope")
+        if response.status_code >= 400:
+            code = "spotify_track_unavailable" if response.status_code in {400, 502} else "spotify_connection_error"
+            raise SpotifyError(code, f"Spotify request failed ({response.status_code})")
+        if not response.content:
+            return {}
+        return response.json()
+
+    def _access_token(self) -> str:
+        now = datetime.now(timezone.utc)
+        if self.state.access_token and self.state.access_expires_at and self.state.access_expires_at > now + timedelta(seconds=15):
+            return self.state.access_token
+        self._refresh(now)
+        return self.state.access_token
+
+    def _refresh(self, now: datetime) -> None:
+        if not self.state.refresh_token:
+            raise SpotifyError("spotify_needs_authorization", "Spotify refresh token is missing")
+        response = self._token_request(
+            {"grant_type": "refresh_token", "refresh_token": self.state.refresh_token}
+        )
+        self._store_token_response(response, now)
+
+    def _token_request(self, data: dict[str, str]) -> dict[str, Any]:
+        try:
+            response = self._client.post(
+                TOKEN_URL,
+                data=data,
+                auth=(self.config.spotify_client_id, self.config.spotify_client_secret),
+            )
+        except httpx.HTTPError as exc:
+            raise SpotifyError("spotify_connection_error", "Spotify token request failed") from exc
+        if response.status_code >= 400:
+            raise SpotifyError("spotify_needs_authorization", "Spotify rejected the token request")
+        return response.json()
+
+    def _store_token_response(self, payload: dict[str, Any], now: datetime) -> None:
+        self.state.access_token = payload.get("access_token", "")
+        if payload.get("refresh_token"):
+            self.state.refresh_token = payload["refresh_token"]
+        expires_in = int(payload.get("expires_in", 3600))
+        self.state.access_expires_at = now + timedelta(seconds=expires_in)
+        self._save()
 
 
-def _refresh(client: httpx.Client, token: dict[str, Any], client_id: str) -> dict[str, Any]:
-    if not client_id:
-        return token
-    response = client.post(
-        "https://accounts.spotify.com/api/token",
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": token["refresh_token"],
-            "client_id": client_id,
-        },
+def _view(payload: dict) -> PlaybackView:
+    device = payload.get("device") or {}
+    item = payload.get("item") or {}
+    return PlaybackView(
+        device_id=device.get("id"),
+        track_uri=item.get("uri"),
+        is_playing=bool(payload.get("is_playing")),
+        volume_percent=device.get("volume_percent"),
+        supports_volume=bool(device.get("supports_volume", False)),
     )
-    if response.status_code != 200:
-        return token
-    fresh = response.json()
-    token = {
-        **token,
-        "access_token": fresh["access_token"],
-        "expires_in": fresh.get("expires_in", token.get("expires_in")),
-        "refresh_token": fresh.get("refresh_token", token["refresh_token"]),
-    }
-    TOKEN_PATH.write_text(json.dumps(token))
-    return token
 
 
-def _pick_device(devices: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not devices:
-        return None
-    for device in devices:
-        if device.get("is_active"):
-            return device
-    for device in devices:
-        if "macbook" in (device.get("name") or "").lower():
-            return device
-    return devices[0]
+# Kept so tests can build an in-memory token file without touching the network.
+def blank_state() -> SpotifyState:
+    return SpotifyState()
 
 
-def _spotify_error(response: httpx.Response) -> str:
-    if response.status_code == 404:
-        return "no active Spotify device, open Spotify"
-    if response.status_code == 403:
-        return "Spotify Premium required"
-    try:
-        message = response.json().get("error", {}).get("message")
-    except ValueError:
-        message = None
-    return message or f"Spotify play failed ({response.status_code})"
+_ = field
+
+from fluffy.integrations.spotify_clap import (  # noqa: E402
+    CLAP_ALBUM,
+    CLAP_ARTIST,
+    CLAP_TITLE,
+    CLAP_TRACK,
+    pause_playback,
+    play_clap_song,
+    set_volume,
+)

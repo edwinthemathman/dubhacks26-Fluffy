@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fluffy.integrations.contacts import contact_name, resolve_handle
-from fluffy.integrations.spotify import Spotify
+from fluffy.integrations.spotify_legacy import Spotify
 from fluffy.notify.photon import notify_fall, shared_sms
 
 _HOME = {
