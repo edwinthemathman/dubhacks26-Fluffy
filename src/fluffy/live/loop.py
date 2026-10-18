@@ -19,7 +19,7 @@ import logging
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
 from fluffy.brain.cues import NOTIFY_SOUNDS, derive, volume_request, wants_music_stop
@@ -244,6 +244,8 @@ class LiveLoop:
         on_clap: Callable[[], dict[str, Any]] | None = None,
         on_volume: Callable[[int], dict[str, Any]] | None = None,
         on_pause: Callable[[], dict[str, Any]] | None = None,
+        delegate_execution: bool = False,
+        submit_plan: Callable[[Plan, str], Awaitable[None]] | None = None,
     ) -> None:
         self.perceiver = perceiver
         self.profiles = profiles
@@ -293,6 +295,9 @@ class LiveLoop:
         self.on_clap = on_clap or play_clap_song
         self.on_volume = on_volume or set_volume
         self.on_pause = on_pause or pause_playback
+        self.delegate_execution = delegate_execution
+        self.submit_plan = submit_plan
+        self.capture_epoch = 0
         self.clap_played = False
         self.music_stopped = False
         self.presence = RoomPresence()
@@ -522,7 +527,9 @@ class LiveLoop:
         # Silence stays frames-only, so the picture cannot invent a thud.
         # Anything louder, including quiet speech, goes out with the frames
         # the way a recording's soundtrack does.
-        if wav is None and self.audio.loudest(span) >= self.s.audible_floor:
+        if self.delegate_execution:
+            wav = None
+        elif wav is None and self.audio.loudest(span) >= self.s.audible_floor:
             pcm = self.audio.last(span)
             wav = to_wav(pcm) if len(pcm) >= self.audio.rate else None  # at least 0.5 s
         return Window(frames=frames, wav=wav, seconds=self.frames.span_of(frames), ended_at=self.now())
@@ -535,8 +542,11 @@ class LiveLoop:
         latest = self.frames.latest
         if latest is not None:
             self.timings.frame_age_ms = max(0, int((self.now() - latest.at) * 1000))
+        if self.delegate_execution:
+            self.emit({"type": "inference.status", "stage": "scene", "status": "started", "frames": len(window.frames)})
         started_read = time.perf_counter()
-        read = await self.perceiver.read_scene(window, effort=self.s.watch_effort, profile=self.profile)
+        effort = "low" if self.delegate_execution else self.s.watch_effort
+        read = await self.perceiver.read_scene(window, effort=effort, profile=self.profile)
         self.timings.scene_read_ms = int((time.perf_counter() - started_read) * 1000)
         if not self._live(epoch):
             return
@@ -544,6 +554,19 @@ class LiveLoop:
             log.warning("scene read failed: %s", read.error)
             return
         scene: SceneState = read.value
+        if self.delegate_execution:
+            scene = scene.model_copy(update={"said": ""})
+            self.emit(
+                {
+                    "type": "inference.status",
+                    "stage": "scene",
+                    "status": "completed",
+                    "frames": len(window.frames),
+                    "elapsed_ms": int((time.perf_counter() - started_read) * 1000),
+                    "frame_age_ms": self.timings.frame_age_ms,
+                    "thinking": read.thinking or "",
+                }
+            )
         scene = scene.model_copy(update={"objects_seen": objects_at_end(scene)})
         if window.wav is None or self.audio.loudest(self.s.watch_span_s) < self.s.audible_floor:
             # The window was silent, so any sound label or quote is a guess from the picture
@@ -912,6 +935,9 @@ class LiveLoop:
     async def _hear_span(self, start: int, end: int, epoch: int) -> None:
         # Pad under half a second. A shorter clip makes the decoder report zero frames.
         wav = to_wav(pad_pcm(self.audio.between(start, end)))
+        if self.delegate_execution:
+            await self._classify_sound(wav, epoch)
+            return
         question = self._open_question()
         if question:
             read = await self.perceiver.answer(wav, question)
@@ -1150,6 +1176,16 @@ class LiveLoop:
             self._end(turn_id, started, "nothing", note="perceptron error")
             log.warning("decide failed: %s", result.error)
             return
+        if self.delegate_execution:
+            self.emit(
+                {
+                    "type": "inference.status",
+                    "stage": "decide",
+                    "status": "completed",
+                    "turn_id": turn_id,
+                    "thinking": result.thinking or "",
+                }
+            )
         spoken = request.kind == "spoken"
         plan = _plan_from_devices(
             result.device,
@@ -1359,6 +1395,9 @@ class LiveLoop:
     # ---------- doing things ----------
 
     def _run_plan(self, plan: Plan, turn: OpenTurn) -> None:
+        if self.delegate_execution:
+            self._handoff_plan(plan, turn)
+            return
         for action in plan.actions:
             call_id = turn.call_ids.get(action.action_id) or self._tool_call(turn, action, "")
             self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "approved"})
@@ -1477,7 +1516,58 @@ class LiveLoop:
         self.emit({"type": "phone", "from": sender, "text": text.strip()})
         self.emit({"type": "sense.hear", "text": text.strip()})
 
+    async def _classify_sound(self, wav: bytes, epoch: int) -> None:
+        """Non-speech labels only. The heard sentence is not a transcript."""
+
+        self.emit({"type": "inference.status", "stage": "sound", "status": "started"})
+        read = await self.perceiver.read_sound(wav)
+        if not self._live(epoch) or read.error or read.value is None:
+            self.emit({"type": "inference.status", "stage": "sound", "status": "unavailable", "detail": "Sound was not classified."})
+            return
+        allowed = {"clap", "doorbell", "knock", "alarm", "impact", "none"}
+        labels = [label for label in read.value.sounds if label in allowed and label != "none"]
+        self.emit({"type": "sense.hear", "sound": labels[0] if labels else None, "text": labels[0] if labels else "sound"})
+        self.emit({"type": "inference.status", "stage": "sound", "status": "completed", "labels": labels})
+        if not labels:
+            return
+        heard = read.value.model_copy(update={"sounds": labels, "heard": ""})
+        scene = apply_sound_read(self.scene, heard) if self.scene is not None else None
+        cues = self._scene_cues(scene, set()) if scene is not None else set()
+        if "clap" in labels:
+            cues.add("clapping")
+        self._on_cues(cues, trigger=", ".join(labels))
+
+    def _handoff_plan(self, plan: Plan, turn: OpenTurn) -> None:
+        for action in plan.actions:
+            call_id = turn.call_ids.get(action.action_id) or self._tool_call(turn, action, "")
+            self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "submitted", "detail": "Sent to the executor"})
+        if self.submit_plan is None:
+            return
+        plan_ref = plan
+        turn_id = turn.turn_id
+
+        async def handoff() -> None:
+            try:
+                await self.submit_plan(plan_ref, turn_id)
+            except Exception:
+                log.exception("executor handoff failed")
+                self.emit({"type": "inference.error", "turn_id": turn_id, "stage": "submit", "message": "The proposal was not submitted to the executor."})
+
+        try:
+            task = asyncio.get_running_loop().create_task(handoff())
+        except RuntimeError:
+            return
+        self.timers.add(task)
+        task.add_done_callback(self.timers.discard)
+
+    def fresh_window(self) -> Window | None:
+        """A copy of the recent frames. Does not wait on the watch task."""
+
+        return self._window(self.s.decide_span_s, self.s.decide_frames)
+
     def _text_checkin(self, text: str) -> None:
+        if self.delegate_execution:
+            return
         """One check-in text per incident. The 60-second follow-ups stay in the room."""
         # #region agent log
         import json
@@ -1502,6 +1592,8 @@ class LiveLoop:
 
     def _text_help(self) -> None:
         """One SMS per incident. The later safety alert does not text again."""
+        if self.delegate_execution:
+            return
         if self._help_text_sent:
             return
         if notify_fall():

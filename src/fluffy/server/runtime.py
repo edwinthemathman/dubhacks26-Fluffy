@@ -302,6 +302,8 @@ class Runtime:
         await self.emit(pending.session_id, "question.resolved", {"question_id": question_id, "answer": answer, "source": source})
         if answer != "yes":
             return {"status": "declined", "question_id": question_id}
+        if not pending.actions:
+            return {"status": "noted", "question_id": question_id}
         gate = self._recheck(pending.actions)
         if gate is not None:
             return gate

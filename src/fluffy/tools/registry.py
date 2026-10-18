@@ -142,6 +142,19 @@ def build_registry(home: HomeConfig) -> Registry:
         room=(room_t, ...),
         volume=(int, Field(ge=0, le=100, strict=True)),
     )
+    Door = _model("DoorArgs", door=(Literal["front_door", "bedroom_door"], ...))
+    PlayMusic = _model(
+        "PlayMusicArgs",
+        query=(str | None, None),
+        volume=(int | None, Field(default=None, ge=0, le=100)),
+    )
+    StopMusic = _model("StopMusicArgs")
+    SendText = _model(
+        "SendTextArgs",
+        to=(str, Field(min_length=1, max_length=80)),
+        message=(str, Field(min_length=1, max_length=300)),
+    )
+    CallPerson = _model("CallPersonArgs", to=(str, Field(min_length=1, max_length=80)))
 
     tools = [
         ToolSpec(name="dim_lights", action_class="comfort", effect_kind="simulated_state", summary="Set lamp brightness. Zero is off.", model=Dim),
@@ -154,6 +167,12 @@ def build_registry(home: HomeConfig) -> Registry:
         ToolSpec(name="announce", action_class="notify", effect_kind="browser_audio", summary="Caption plus one spoken utterance.", model=Announce, requires_provider="elevenlabs"),
         ToolSpec(name="alert_caregiver", action_class="safety", effect_kind="photon", summary="Message the configured trusted contact about an eligible incident.", model=Alert, auto_enabled=False, requires_provider="photon"),
         ToolSpec(name="set_volume", action_class="comfort", effect_kind="spotify", summary="Set Spotify device volume after verification.", model=Volume, requires_provider="spotify"),
+        ToolSpec(name="open_door", action_class="comfort", effect_kind="simulated_state", summary="Open the front or bedroom door.", model=Door),
+        ToolSpec(name="close_door", action_class="comfort", effect_kind="simulated_state", summary="Close the front or bedroom door.", model=Door),
+        ToolSpec(name="play_music", action_class="comfort", effect_kind="spotify", summary="Play a Spotify track URI. A title without a URI does not play.", model=PlayMusic),
+        ToolSpec(name="stop_music", action_class="comfort", effect_kind="spotify", summary="Pause Spotify and stop local sound.", model=StopMusic),
+        ToolSpec(name="send_text", action_class="comfort", effect_kind="photon", summary="Text a saved contact. Fails closed unless Photon can deliver it.", model=SendText),
+        ToolSpec(name="call_person", action_class="comfort", effect_kind="simulated_state", summary="Show a demo call caption. Does not place a call.", model=CallPerson),
     ]
     return Registry(home, tools)
 

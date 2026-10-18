@@ -71,6 +71,7 @@ class HomeStore:
             room.id: MediaState(room=room.id, volume=35, simulated=True)
             for room in home.rooms
         }
+        self.doors = {"front_door": "closed", "bedroom_door": "closed"}
         self.flashes: list[FlashOverlay] = []
         self.captions: list[Caption] = []
         self.alerts: list[AlertView] = []
@@ -596,6 +597,132 @@ class HomeStore:
             error_code="partial_effects" if any(item.status == "succeeded" for item in sub) else failed[0].error_code,
             sub_results=sub,
             detail="one playback channel did not stop",
+        )
+
+    def _tool_open_door(self, args, session_id, plan_id, action_id) -> ToolEffect:
+        del session_id, plan_id, action_id
+        return self._set_door(args["door"], "open")
+
+    def _tool_close_door(self, args, session_id, plan_id, action_id) -> ToolEffect:
+        del session_id, plan_id, action_id
+        return self._set_door(args["door"], "closed")
+
+    def _set_door(self, door: str, state: str) -> ToolEffect:
+        with self.lock:
+            previous = self.doors.get(door, "closed")
+            self.doors[door] = state
+            self._touch_locked()
+        self._publish()
+        return ToolEffect(
+            status="succeeded",
+            effect_kind="simulated_state",
+            verification="state_committed",
+            previous_state={"door": door, "state": previous},
+            new_state={"door": door, "state": state},
+        )
+
+    def _tool_play_music(self, args, session_id, plan_id, action_id) -> ToolEffect:
+        del session_id, plan_id, action_id
+        room = self.home.rooms[0].id
+        query = str(args.get("query") or "").strip()
+        with self.lock:
+            previous = self.media[room].model_dump(mode="json")
+        if not self.spotify.config.spotify_configured or not self.spotify.state.refresh_token:
+            return ToolEffect(
+                status="failed",
+                effect_kind="spotify",
+                verification="unverified",
+                previous_state=previous,
+                error_code="spotify_needs_authorization",
+                detail="Spotify is not authorized",
+            )
+        if not query.startswith("spotify:"):
+            return ToolEffect(
+                status="failed",
+                effect_kind="spotify",
+                verification="unverified",
+                previous_state=previous,
+                error_code="spotify_track_unavailable",
+                detail="play_music needs a Spotify track URI",
+            )
+        played = self.spotify.play(query)
+        with self.lock:
+            if played.status == "succeeded":
+                self.media[room].provider = "spotify"
+                self.media[room].sound_id = query
+                self.media[room].title = query
+                self.media[room].playback = "playing"
+                self.media[room].simulated = False
+                self.media[room].verification = "playback_confirmed"
+                self.media[room].error_code = None
+                if args.get("volume") is not None:
+                    self.media[room].volume = args["volume"]
+            else:
+                self.media[room].error_code = played.error_code
+                self.media[room].playback = "error"
+            self._touch_locked()
+            new_state = self.media[room].model_dump(mode="json")
+        self._publish()
+        if played.status != "succeeded":
+            return ToolEffect(
+                status="failed" if played.status == "failed" else "unknown",
+                effect_kind="spotify",
+                verification="unverified",
+                previous_state=previous,
+                new_state=new_state,
+                error_code=played.error_code,
+                detail=played.detail,
+            )
+        return ToolEffect(
+            status="succeeded",
+            effect_kind="spotify",
+            verification="playback_confirmed",
+            previous_state=previous,
+            new_state=new_state,
+            provider_reference=query,
+        )
+
+    def _tool_stop_music(self, args, session_id, plan_id, action_id) -> ToolEffect:
+        del args
+        room = self.home.rooms[0].id
+        return self._tool_stop_sound({"room": room}, session_id, plan_id, action_id)
+
+    def _tool_send_text(self, args, session_id, plan_id, action_id) -> ToolEffect:
+        del session_id, plan_id, action_id
+        if not self.photon.config.photon_configured:
+            return ToolEffect(
+                status="failed",
+                effect_kind="photon",
+                verification="unverified",
+                error_code="photon_not_configured",
+                detail="Photon is not configured",
+            )
+        return ToolEffect(
+            status="failed",
+            effect_kind="photon",
+            verification="unverified",
+            error_code="texting_unavailable",
+            detail="A named contact is not the configured Photon space, so nothing was sent",
+        )
+
+    def _tool_call_person(self, args, session_id, plan_id, action_id) -> ToolEffect:
+        name = str(args.get("to") or "them")
+        message = self._add_caption(
+            text=f"Calling {name} (demo). No call was placed.",
+            priority="normal",
+            ttl_s=15,
+            source="call_person",
+            session_id=session_id,
+            message_id=action_id,
+            speak=False,
+        )
+        return ToolEffect(
+            status="succeeded",
+            effect_kind="simulated_state",
+            verification="state_committed",
+            new_state={"caption_id": message.message_id, "label": "call (demo)", "to": name},
+            message=message,
+            detail="call (demo); no call was placed",
         )
 
     def _tool_set_volume(self, args, session_id, plan_id, action_id) -> ToolEffect:

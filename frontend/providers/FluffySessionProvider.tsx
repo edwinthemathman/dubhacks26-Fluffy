@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { SpeechPlayer } from "@/lib/audio/player";
-import { getJson, healthUrl, postJson, questionUrl, sessionUrl, stateUrl, stopUrl, textInputUrl, toolsUrl } from "@/lib/fluffy/client";
+import { getJson, healthUrl, postJson, questionUrl, sessionUrl, stateUrl, stopUrl, textInputUrl, toolsUrl, transcriptUrl } from "@/lib/fluffy/client";
 import { readPublicConfig, type FluffyPublicConfig } from "@/lib/fluffy/config";
 import { normalizeEvent } from "@/lib/fluffy/normalizeEvent";
 import { thinkingLabel, type SensingFacts } from "@/lib/fluffy/phrases";
@@ -10,6 +10,7 @@ import { sceneToRecorded } from "@/lib/fluffy/recorded";
 import { createSession, reduceSession } from "@/lib/fluffy/reducer";
 import type { CanonicalEvent, SessionState } from "@/lib/fluffy/types";
 import { CaptureController, type CapturePhase } from "@/lib/media/capture";
+import { useChromeSpeech, type SpeechPhase } from "@/lib/speech/useChromeSpeech";
 import { matchScene } from "@/lib/scenes";
 
 type SessionApi = {
@@ -35,6 +36,7 @@ type SessionApi = {
   stopFluffy: () => Promise<void>;
   muteMic: (muted: boolean) => void;
   registerCaptureVideo: (video: HTMLVideoElement | null) => void;
+  speech: SpeechPhase;
 };
 
 const SessionContext = createContext<SessionApi | null>(null);
@@ -59,6 +61,8 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
   const [sensing, setSensing] = useState<CapturePhase>(idleCapture);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [started, setStarted] = useState(false);
+  const [speech, setSpeech] = useState<SpeechPhase>({ listening: false, phrase: "", error: null });
   const stateRef = useRef(state);
   const socketRef = useRef<WebSocket | null>(null);
   const captureRef = useRef<CaptureController | null>(null);
@@ -76,6 +80,10 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
 
   const ingest = useCallback((raw: unknown, historical: boolean) => {
     for (const event of normalizeEvent(raw, { now: Date.now() })) {
+      if (event.type === "stage" && event.analyzed) {
+        captureRef.current?.markAnalyzed();
+        apply({ type: "capability", name: "inference", available: true, detail: "Perceptron returned a scene read." });
+      }
       if (event.type === "observation" || (event.type === "turn.start" && event.source !== "text" && event.source !== "recorded")) {
         apply({ type: "capability", name: "inference", available: true, detail: "The backend sent a perception event." });
       }
@@ -239,6 +247,31 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     setDraft("");
   }, [apply, config, draft, recordedDemo, submitting]);
 
+  const submitTranscript = useCallback(async (phrase: string) => {
+    const text = phrase.trim();
+    if (!text || recordedDemo) return;
+    const requestId = createId("req");
+    apply({ type: "submit", requestId, text });
+    const result = await postJson(transcriptUrl(config), {
+      session_id: stateRef.current.sessionId,
+      request_id: requestId,
+      text,
+      epoch: captureRef.current?.epoch ?? 0,
+      captured_at: new Date().toISOString(),
+      final: true,
+      source: "browser_speech",
+    });
+    if (!result.ok) {
+      apply({ type: "submit.failed", requestId, detail: result.detail || "The transcript was not accepted." });
+      return;
+    }
+    apply({ type: "capability", name: "text", available: true, detail: "Speech transcript accepted." });
+    apply({ type: "submit.accepted", requestId });
+  }, [apply, config, recordedDemo]);
+
+  const speechEnabled = started && !paused && !recordedDemo && sensing.mic !== "muted";
+  useChromeSpeech(speechEnabled, (text) => void submitTranscript(text), setSpeech, () => playerRef.current?.speaking === true);
+
   const answerQuestion = useCallback(async (choice: string) => {
     const question = stateRef.current.question;
     if (!question || answering) return;
@@ -278,6 +311,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     if (videoNode.current) capture.attach(videoNode.current);
     await capture.start(stateRef.current.sessionId);
     void postJson(`${config.httpBase}/api/session/speaker`, { client_id: clientIdRef.current });
+    setStarted(true);
     setPaused(false);
     setStream(capture.previewStream());
   }, [config.httpBase]);
@@ -298,6 +332,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     await captureRef.current?.stop();
     playerRef.current?.stop();
     setStream(null);
+    setStarted(false);
     setPaused(false);
     if (config.contract === "execution-v2") {
       const result = await postJson(stopUrl(config), { session_id: stateRef.current.sessionId });
@@ -354,6 +389,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     stopFluffy,
     muteMic,
     registerCaptureVideo,
+    speech,
   };
 
   return (

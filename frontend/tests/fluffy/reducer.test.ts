@@ -173,6 +173,23 @@ describe("session reducer", () => {
     expect(collapsed[0].text).toBe("dim the lamp");
   });
 
+  it("shows the inference stage without treating a frame ack as analysis", () => {
+    const reading = fromRaw({ type: "inference.status", stage: "scene", status: "started" });
+    expect(reading.stage).toBe("Reading the camera");
+    expect(thinkingLabel(reading, sensing)).toBe("Reading the camera");
+    const analyzed = fromRaw({ type: "inference.status", stage: "scene", status: "completed", thinking: "The person is upright." });
+    expect(analyzed.stage).toBe("Camera frame analyzed");
+    expect(analyzed.thinking).toEqual([{ label: "Saw", text: "The person is upright." }]);
+    const empty = fromRaw({ type: "inference.status", stage: "decide", status: "completed", thinking: "" });
+    expect(empty.thinking).toEqual([{ label: "Decision", text: "not returned" }]);
+    const execution = feed(analyzed, { type: "inference.status", stage: "execution", status: "completed", thinking: "asked to dim" });
+    expect(execution.thinking.map((item) => item.label)).toEqual(["Saw", "Execution"]);
+    expect(execution.thinking[1].text).toBe("asked to dim");
+    const failed = feed(reading, { type: "inference.error", turn_id: "req_1", message: "The camera read failed." });
+    expect(failed.inference).toBe("idle");
+    expect(failed.notice).toBe("The camera read failed.");
+  });
+
   it("keeps distinct requests as separate turns", () => {
     const state = apply([
       { type: "submit", requestId: "req_one", text: "dim the lamp" },

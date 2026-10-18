@@ -83,6 +83,7 @@ export function thinkingLabel(state: SessionState, sensing: SensingFacts): strin
     return action.summary ?? statusPhrase(action, state.home);
   }
   if (action && (action.status === "proposed" || action.status === "approved")) return "Proposed action";
+  if (state.inference === "running" && state.stage) return state.stage;
   if (state.inference === "running") return "Considering your request";
   if (state.observationPending) return "Checking the room";
   if (sensing.started && !sensing.paused && sensing.transport === "reaching" && sensing.inferenceAvailable) {

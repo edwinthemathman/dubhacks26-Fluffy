@@ -101,9 +101,10 @@ def test_developer_dim_updates_authoritative_state(tmp_path):
         assert refreshed["revision"] == snapshot["revision"]
 
         class _Dim:
-            async def interpret(self, text: str):
+            async def interpret(self, text: str, window=None):
                 from fluffy.live.text_bridge import ProposedAction, TextDecision
 
+                del window
                 assert "30" in text
                 return TextDecision(
                     actions=[
@@ -112,7 +113,8 @@ def test_developer_dim_updates_authoritative_state(tmp_path):
                             {"room": "living_room", "luminosity": 30, "light": "lamp.living_floor"},
                             "The typed request asks for 30 percent.",
                         )
-                    ]
+                    ],
+                    confidence=0.9,
                 )
 
         # The product route calls the injected interpreter. This double stands in for Perceptron.

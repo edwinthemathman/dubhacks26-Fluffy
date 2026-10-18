@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 from contextlib import asynccontextmanager
 
@@ -14,7 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fluffy.config import RuntimeSettings, load_settings
 from fluffy.models.contracts import DeveloperRequest, Observation, PlanSubmission, PossibleFallEvent, SchemaVersionError
+from fluffy.live.harness_bridge import HarnessPerception
 from fluffy.live.text_bridge import build_text_interpreter, submit_text
+
+log = logging.getLogger("fluffy.harness")
 from fluffy.server.runtime import Runtime, build_runtime
 
 
@@ -53,6 +57,27 @@ class TextInputBody(BaseModel):
 class TranscriptBody(TextInputBody):
     captured_at: str | None = None
     final: bool = True
+    source: str | None = None
+
+
+class FrameBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    epoch: int
+    ts_ms: int
+    motion: float = 0
+    jpeg_base64: str
+
+
+class AudioBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    epoch: int
+    pcm16_base64: str
+    sample_rate: int = 16000
+    format: str = "pcm16"
 
 
 class ManualDimBody(BaseModel):
@@ -72,15 +97,25 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
         runtime.http = httpx.AsyncClient(timeout=httpx.Timeout(settings.home.speech_total_cap_s + 5))
         app.state.runtime = runtime
         await runtime.refresh_integrations()
-        tasks = []
+        perception = getattr(app.state, "perception", None)
+        if perception is None:
+            client = getattr(app.state.text_interpreter, "client", None)
+            perception = HarnessPerception.build(runtime, settings, client)
+            app.state.perception = perception
+        await perception.start()
+        tasks = [perception._runner, perception._consumer]
         if settings.autotick_safety:
             tasks.append(asyncio.create_task(_safety_loop(runtime)))
         tasks.append(asyncio.create_task(_home_listener(runtime, settings)))
         try:
             yield
         finally:
+            for request_task in list(getattr(app.state, "text_tasks", {}).values()):
+                request_task.cancel()
             for task in tasks:
-                task.cancel()
+                if task is not None:
+                    task.cancel()
+            await perception.close()
             await runtime.http.aclose()
 
     app = FastAPI(title="Fluffy harness", lifespan=lifespan)
@@ -94,6 +129,7 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
     app.state.settings = settings
     app.state.text_interpreter = interpreter or build_text_interpreter(settings)
     app.state.text_inflight = set()
+    app.state.text_tasks = {}
 
     def internal(authorization: str | None) -> None:
         token = (authorization or "").removeprefix("Bearer ").strip()
@@ -111,6 +147,8 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
             "listening": runtime.listening,
             "integrations": integrations,
             "inference": settings.integrations.inference_status(),
+            "media": app.state.perception.stats.public() if getattr(app.state, "perception", None) else {},
+            "live_loop": getattr(app.state, "perception", None) is not None,
         }
 
     @app.get("/api/session")
@@ -177,24 +215,45 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
             raise HTTPException(status_code=400, detail={"error_code": "invalid_arguments", "message": "session mismatch"})
         if not explicit and not getattr(body, "final", True):
             raise HTTPException(status_code=400, detail={"error_code": "invalid_arguments", "message": "only a final transcript is accepted"})
+        if not explicit:
+            blocked = _transcript_block(body, runtime, app)
+            if blocked is not None:
+                status, detail = blocked
+                raise HTTPException(status_code=status, detail=detail)
         if body.request_id in runtime.idempotent or body.request_id in app.state.text_inflight:
             return JSONResponse(status_code=202, content={"status": "accepted", "request_id": body.request_id, "completed": False})
         app.state.text_inflight.add(body.request_id)
 
         async def _finish() -> None:
             try:
+                window = None
+                if not explicit:
+                    perception = getattr(app.state, "perception", None)
+                    if perception is not None:
+                        window = perception.loop.fresh_window()
                 await submit_text(
                     runtime,
                     request_id=body.request_id,
                     text=body.text,
                     interpreter=app.state.text_interpreter,
                     explicit=explicit,
+                    window=window,
                 )
+            except Exception:
+                log.warning("text task failed: %s", "task")
+                await runtime.emit(
+                    settings.session_id,
+                    "inference.error",
+                    {"turn_id": body.request_id, "request_id": body.request_id, "stage": "task", "message": "The request failed before a result was recorded."},
+                )
+                await runtime.emit(settings.session_id, "turn.end", {"turn_id": body.request_id, "request_id": body.request_id, "outcome": "error"})
             finally:
                 app.state.text_inflight.discard(body.request_id)
+                app.state.text_tasks.pop(body.request_id, None)
 
-        asyncio.create_task(_finish())
-        return JSONResponse(status_code=202, content={"status": "accepted", "request_id": body.request_id, "completed": False})
+        task = asyncio.create_task(_finish())
+        app.state.text_tasks[body.request_id] = task
+        return JSONResponse(status_code=202, content={"status": "accepted", "request_id": body.request_id, "completed": False, "stage": "queued"})
 
     @app.post("/api/input/text")
     async def input_text(body: TextInputBody) -> JSONResponse:
@@ -203,6 +262,31 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
     @app.post("/api/input/transcript")
     async def input_transcript(body: TranscriptBody) -> JSONResponse:
         return await _accept_words(body, explicit=False)
+
+    @app.post("/api/media/frames")
+    async def media_frames(body: FrameBody) -> JSONResponse:
+        perception = app.state.perception
+        status, payload = perception.accept_frame(
+            session_id=body.session_id,
+            epoch=body.epoch,
+            ts_ms=body.ts_ms,
+            motion=body.motion,
+            jpeg_base64=body.jpeg_base64,
+        )
+        return JSONResponse(status_code=status, content=payload)
+
+    @app.post("/api/media/audio")
+    async def media_audio(body: AudioBody) -> JSONResponse:
+        if body.format != "pcm16":
+            return JSONResponse(status_code=400, content={"error_code": "invalid_arguments", "message": "audio format must be pcm16"})
+        perception = app.state.perception
+        status, payload = perception.accept_audio(
+            session_id=body.session_id,
+            epoch=body.epoch,
+            pcm16_base64=body.pcm16_base64,
+            sample_rate=body.sample_rate,
+        )
+        return JSONResponse(status_code=status, content=payload)
 
     @app.post("/api/dev/request")
     async def developer(body: DeveloperRequest, idempotency_key: str | None = Header(default=None)) -> dict:
@@ -418,6 +502,24 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
                 await runtime.emit(settings.session_id, "executor.status", {"online": False})
 
     return app
+
+
+def _transcript_block(body: TranscriptBody, runtime: Runtime, app: FastAPI) -> tuple[int, dict] | None:
+    """A browser final is accepted while capture is active. Otherwise say why it was refused."""
+
+    if body.source != "browser_speech":
+        return None
+    perception = getattr(app.state, "perception", None)
+    loop = perception.loop if perception is not None else None
+    epoch = loop.capture_epoch if loop is not None else 0
+    if body.epoch is not None and epoch and body.epoch != epoch:
+        return 400, {"error_code": "stale_epoch", "message": "transcript epoch does not match the active capture"}
+    capture_active = bool(loop is not None and epoch and not loop.paused and (body.epoch is None or body.epoch == epoch))
+    if runtime.listening in {"paused", "suppressed"} and not capture_active:
+        return 409, {"error_code": "not_listening", "message": "Fluffy is not listening. Start the session, then speak again."}
+    if runtime.stopped and not capture_active:
+        return 409, {"error_code": "not_listening", "message": "The session is stopped."}
+    return None
 
 
 async def _safety_loop(runtime: Runtime) -> None:

@@ -30,6 +30,9 @@ class EvidenceDecision:
     detail: str
 
 
+_DOORS = {"front_door", "bedroom_door"}
+
+
 def _targets_for(tool: str, args: dict) -> list[str]:
     targets = []
     if args.get("room"):
@@ -38,6 +41,10 @@ def _targets_for(tool: str, args: dict) -> list[str]:
         targets.append(args["light"])
     if tool == "set_blinds":
         targets.append(args.get("room", ""))
+    if tool in {"open_door", "close_door"} and args.get("door"):
+        targets.append(str(args["door"]))
+    if tool in {"play_music", "stop_music"} and not targets:
+        targets.append("living_room")
     return [item for item in targets if item]
 
 
@@ -73,9 +80,9 @@ def evaluate_action(
         cue_ok = True
         cue_detail = "explicit request"
 
-    known_targets = set(home.room_ids + home.light_ids + [blind.id for room in home.rooms for blind in room.blinds])
+    known_targets = set(home.room_ids + home.light_ids + [blind.id for room in home.rooms for blind in room.blinds]) | _DOORS
     target_ok = bool(targets) and all(target in known_targets or target in home.room_ids for target in targets)
-    if tool == "show_caption":
+    if tool in {"show_caption", "send_text", "call_person"}:
         target_ok = True
     if tool == "alert_caregiver":
         target_ok = True

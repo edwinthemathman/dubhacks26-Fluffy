@@ -33,7 +33,7 @@ export default function Home() {
   const plan = latest?.planId ? session.state.plans[latest.planId] : undefined;
   const actions = (latest?.actionIds ?? []).map((id) => session.state.actions[id]).filter((item) => item != null);
   const busyLabel = session.stageLabel;
-  const showThinking = Boolean(busyLabel) && !plan && !latest?.recorded;
+  const showThinking = (Boolean(busyLabel) || session.state.thinking.length > 0) && !latest?.recorded;
   const typewriter = useTypewriter(EXAMPLE_CUES, { active: session.draft.length === 0 && !session.recordedDemo });
   const placeholder = session.recordedDemo ? "Try a recorded line, like “ugh, it's bright”" : typewriter.text + (typewriter.cursor ? "|" : "");
 
@@ -123,6 +123,17 @@ export default function Home() {
             </div>
           </form>
 
+          {session.speech.error || session.speech.listening || session.speech.phrase ? (
+            <p className="text-sm text-neutral-500">
+              {session.speech.error
+                ? session.speech.error
+                : session.speech.listening
+                  ? session.speech.phrase
+                    ? `Listening · “${session.speech.phrase}”`
+                    : "Listening"
+                  : `Heard “${session.speech.phrase}”`}
+            </p>
+          ) : null}
           <CameraPreview />
           {session.state.notice ? <p className="text-sm text-neutral-500">{session.state.notice}</p> : null}
           {session.state.captions[session.state.captions.length - 1] ? (
@@ -133,10 +144,18 @@ export default function Home() {
         {showThinking && (
           <div data-bg-clear className="mx-auto w-full max-w-4xl">
             <NotchedPanel className="animate-rise-in" title="Fluffy">
-              <div className="relative h-[180px] overflow-hidden rounded-xl border border-neutral-200">
-                <p className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <ThinkingLabel label={busyLabel} />
-                </p>
+              <div className="max-h-[180px] min-h-[180px] overflow-y-auto rounded-xl border border-neutral-200 p-4">
+                {busyLabel ? (
+                  <p className={"text-sm text-neutral-500 " + (session.state.thinking.length ? "mb-3" : "flex min-h-[148px] items-center justify-center")}>
+                    <ThinkingLabel label={busyLabel} />
+                  </p>
+                ) : null}
+                {session.state.thinking.map((step) => (
+                  <div key={step.label} className="mb-3 last:mb-0">
+                    <p className="text-xs font-medium tracking-tight text-neutral-400">{step.label}</p>
+                    <pre className="mt-1 whitespace-pre-wrap text-left text-xs leading-5 text-neutral-600">{step.text}</pre>
+                  </div>
+                ))}
               </div>
             </NotchedPanel>
           </div>

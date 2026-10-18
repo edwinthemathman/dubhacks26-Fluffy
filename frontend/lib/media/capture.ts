@@ -54,6 +54,10 @@ export class CaptureController {
     this.tailUntil = now + 300;
   }
 
+  markAnalyzed(now = Date.now()): void {
+    this.patch({ lastAnalyzedAt: now, transport: "reaching", delayed: false, error: null });
+  }
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     listener(this.phase);
@@ -236,7 +240,7 @@ export class CaptureController {
       header.setBigUint64(1, BigInt(ts), true);
       header.setFloat32(9, motion, true);
       socket.send(join(header.buffer, jpeg));
-      this.patch({ transport: "reaching", lastAnalyzedAt: ts, delayed: false });
+      this.patch({ transport: "reaching", delayed: false, error: null });
       return;
     }
     if (this.mediaUnsupported) return;
@@ -262,7 +266,7 @@ export class CaptureController {
         this.patch({ transport: "offline", delayed, error: "The media upload did not reach the backend." });
         return;
       }
-      this.patch({ transport: "reaching", lastAnalyzedAt: Date.now(), delayed: false, error: null });
+      this.patch({ transport: "reaching", delayed: false, error: null });
     });
   }
 
@@ -299,7 +303,13 @@ export class CaptureController {
     const bytes = new Uint8Array(pcm);
     let binary = "";
     for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-    void postJson(mediaAudioUrl(this.config), { session_id: this.sessionId, epoch, pcm16_base64: btoa(binary) });
+    void postJson(mediaAudioUrl(this.config), {
+      session_id: this.sessionId,
+      epoch,
+      pcm16_base64: btoa(binary),
+      sample_rate: 16000,
+      format: "pcm16",
+    });
   }
 
   private motionScore(pixels: Uint8ClampedArray): number {

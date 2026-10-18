@@ -55,6 +55,8 @@ export function createSession(sessionId = "local"): SessionState {
     capabilities: { text: "unknown", questions: "unknown", media: "unknown", stop: "unknown", inference: "unknown" },
     capabilityNotes: {},
     inference: "idle",
+    stage: null,
+    thinking: [],
     observationPending: false,
     notice: null,
     inputAccepted: false,
@@ -159,10 +161,25 @@ function apply(state: SessionState, event: CanonicalEvent, now: number, historic
       };
     case "turn.start":
       return startTurn(state, event, now);
+    case "stage": {
+      const thinking = event.step
+        ? [...state.thinking.filter((item) => item.label !== event.step), { label: event.step, text: event.thinking?.trim() || "not returned" }].slice(-4)
+        : state.thinking;
+      return { ...state, stage: event.label, inference: event.analyzed ? state.inference : "running", thinking };
+    }
+    case "inference.error":
+      return {
+        ...state,
+        inference: "idle",
+        stage: null,
+        notice: event.message,
+        turns: state.turns.map((turn) => (event.turnId && (turn.id === event.turnId || turn.requestId === event.turnId) ? { ...turn, open: false } : turn)),
+      };
     case "turn.end":
       return {
         ...state,
         inference: "idle",
+        stage: null,
         observationPending: false,
         turns: state.turns.map((turn) => (turn.id === event.turnId || turn.requestId === event.turnId ? { ...turn, open: false } : turn)),
       };

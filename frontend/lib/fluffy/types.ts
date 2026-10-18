@@ -188,6 +188,8 @@ export type SessionState = {
   capabilities: Record<CapabilityName, CapabilityState>;
   capabilityNotes: Partial<Record<CapabilityName, string>>;
   inference: "idle" | "running";
+  stage: string | null;
+  thinking: { label: string; text: string }[];
   observationPending: boolean;
   notice: string | null;
   inputAccepted: boolean;
@@ -214,6 +216,8 @@ export type CanonicalEvent = StreamMeta &
     | { type: "home"; patch: HomePatch }
     | { type: "turn.start"; turnId: string; requestId?: string; source: TurnSource; text?: string }
     | { type: "turn.end"; turnId: string }
+    | { type: "stage"; label: string; analyzed: boolean; step?: string; thinking?: string }
+    | { type: "inference.error"; turnId?: string; message: string }
     | { type: "observation"; turnId?: string; text: string; pending?: boolean }
     | { type: "say"; messageId: string; turnId?: string; text: string; permitAudio: boolean; audioUrl?: string }
     | { type: "speech"; messageId: string; status: "generated" | "playing" | "played" | "failed" }

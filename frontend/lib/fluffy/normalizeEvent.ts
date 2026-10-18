@@ -76,6 +76,8 @@ function parse(type: string, event: Record<string, unknown>, ctx: NormalizeConte
     return [{ type: "turn.end", turnId }];
   }
   if (type === "think" || type === "status") return observation(event);
+  if (type === "inference.status") return inferenceStatus(event);
+  if (type === "inference.error") return inferenceError(event);
   if (type === "sense.see" || type === "sense.hear") return sense(type, event);
   if (type === "say" || type === "output.message") return say(event);
   if (type === "speech.status") return speech(event);
@@ -109,13 +111,49 @@ function turnStart(event: Record<string, unknown>): CanonicalEvent[] | null {
   const turnId = asString(event.turn_id ?? event.turnId);
   if (!turnId) return null;
   const kind = asString(event.kind ?? event.source);
-  const source = kind === "spoken" || kind === "text" ? "text" : kind === "sound" || kind === "audio" ? "audio" : kind === "inferred" || kind === "vision" ? "vision" : "system";
+  const source = kind === "spoken" || kind === "text" || kind === "speech" ? "text" : kind === "sound" || kind === "audio" ? "audio" : kind === "inferred" || kind === "vision" ? "vision" : "system";
   return [{
     type: "turn.start",
     turnId,
     requestId: asString(event.request_id ?? event.requestId) ?? undefined,
     source,
     text: asString(event.trigger ?? event.text ?? event.utterance) ?? undefined,
+  }];
+}
+
+function inferenceStatus(event: Record<string, unknown>): CanonicalEvent[] | null {
+  const stage = asString(event.stage);
+  const status = asString(event.status);
+  if (!stage || !status) return null;
+  const label =
+    stage === "text" && status === "started" ? "Interpreting request"
+    : stage === "text" && status === "completed" ? "Interpreting request"
+    : stage === "scene" && status === "started" ? "Reading the camera"
+    : stage === "scene" && status === "completed" ? "Camera frame analyzed"
+    : stage === "decide" && status === "completed" ? "Deciding"
+    : stage === "sound" && status === "started" ? "Classifying a sound"
+    : stage === "sound" && status === "completed" ? "Sound classified"
+    : stage === "submit" ? "Sending the proposal"
+    : stage === "execution" && status === "completed" ? "One execution"
+    : null;
+  if (!label) return null;
+  const completed = status === "completed";
+  const step =
+    completed && stage === "scene" ? "Saw"
+    : completed && (stage === "decide" || stage === "text") ? "Decision"
+    : completed && stage === "execution" ? "Execution"
+    : undefined;
+  const thinking = asString(event.thinking) ?? undefined;
+  return [{ type: "stage", label, analyzed: stage === "scene" && completed, step, thinking }];
+}
+
+function inferenceError(event: Record<string, unknown>): CanonicalEvent[] | null {
+  const message = asString(event.message ?? event.note);
+  if (!message) return null;
+  return [{
+    type: "inference.error",
+    turnId: asString(event.turn_id ?? event.turnId ?? event.request_id) ?? undefined,
+    message,
   }];
 }
 

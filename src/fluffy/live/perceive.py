@@ -23,10 +23,9 @@ from fluffy.demo.analyze import (
     SOUND_PROMPT,
     scene_prompt,
     tag_prompt,
-    _meta_result,
     _parse_model,
     _safe_error,
-    _scene_text,
+    _thinking,
     _usage,
     _user_text,
     transcript_prompt,
@@ -37,7 +36,7 @@ from fluffy.perception.scene import SceneState, SoundRead, TagRead, TranscriptRe
 from fluffy.profile.model import Profile
 
 LIVE_TIMEOUT_S = 30
-MAX_ROUNDS = 2
+_VISUAL_ONLY_TOOLS = {"describe_scene", "find_object", "read_text", "look"}
 
 LIVE_NOTE = (
     "This is a live camera. The frames below are the last {seconds:.0f} seconds, "
@@ -69,6 +68,7 @@ class Read:
     error: str | None = None
     ms: int = 0
     usage: dict[str, int] = field(default_factory=dict)
+    thinking: str | None = None
 
 
 @dataclass
@@ -82,6 +82,8 @@ class Decision:
     ms: int = 0
     usage: dict[str, int] = field(default_factory=dict)
     error: str | None = None
+    thinking: str | None = None
+    confidence: float | None = None
 
 
 async def read_scene(
@@ -102,7 +104,7 @@ async def read_scene(
                 {
                     "role": "user",
                     "content": [
-                        *window.media(),
+                        *window.media(with_audio=False),
                         {
                             "type": "text",
                             "text": (
@@ -121,7 +123,7 @@ async def read_scene(
     except SDKError as exc:
         return Read(error=_safe_error(exc), ms=_ms(started))
     scene, error = _parse_model(completion.text, SceneState, "Scene read")
-    return Read(value=scene, error=error, ms=_ms(started), usage=_usage(completion))
+    return Read(value=scene, error=error, ms=_ms(started), usage=_usage(completion), thinking=_thinking(getattr(completion, "reasoning", None)))
 
 
 async def read_tags(client: AsyncClient, window: Window, *, profile: Profile | None = None) -> Read:
@@ -135,7 +137,7 @@ async def read_tags(client: AsyncClient, window: Window, *, profile: Profile | N
                 {
                     "role": "user",
                     "content": [
-                        *window.media(),
+                        *window.media(with_audio=False),
                         {"type": "text", "text": tag_prompt(names)},
                     ],
                 }
@@ -309,67 +311,114 @@ async def decide(
     important: str = "",
     memory: Any = None,
     now: Any = None,
+    evidence_mode: str = "",
 ) -> Decision:
-    """The decision call with tools. Only device calls from the last round count."""
+    """One decision call. Device tools in that response are the whole plan."""
+    del memory, now
     started = time.perf_counter()
-    # Words already heard. The decision call itself has the wav, so it does not
-    # wait on another reasoning pass to transcribe them again.
+    picture = Window(frames=list(window.frames), wav=None, seconds=window.seconds, ended_at=window.ended_at)
     transcript = scene.said.strip() if scene is not None and scene.said.strip() else ""
     if not transcript and utterance.strip():
         transcript = utterance.strip()
+    mode = evidence_mode or "video"
+    preface = ""
+    if mode == "video_plus_transcript":
+        preface = (
+            "Evidence mode: video_plus_transcript.\n"
+            "The words below are a finalized browser transcript. No audio is attached.\n"
+            "Do not invent speech beyond that text.\n"
+        )
     user_text = (
-        f"{LIVE_NOTE.format(seconds=window.seconds)}\n"
+        f"{preface}"
+        f"{LIVE_NOTE.format(seconds=picture.seconds)}\n"
         f"{_user_text(profile, utterance, scene, cues, transcript=transcript, asked=asked, answer=answer, room_change=room_change, habit_lines=habit_lines, tag_lines=tag_lines, important=important)}"
     )
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},
-        {"role": "user", "content": [*window.media(), {"type": "text", "text": user_text}]},
+        {"role": "user", "content": [*picture.media(with_audio=False), {"type": "text", "text": user_text}]},
     ]
-    result = Decision()
-    scene_text = _scene_text(scene)
-    for round_index in range(MAX_ROUNDS):
-        try:
-            completion = await client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                tools=perceptron_tools(),
-                parallel_tool_calls=True,
-                reasoning_effort=effort,
-                max_completion_tokens=max_tokens,
-                timeout=LIVE_TIMEOUT_S,
-            )
-        except SDKError as exc:
-            result.error = _safe_error(exc)
-            break
-        result.rounds = round_index + 1
-        result.usage = _usage(completion) or result.usage
-        result.reply = (completion.text or "").strip()
-        meta, device, bad = _split(
-            [
-                ToolCall(id=call.id, name=call.name, arguments=call.arguments or "")
-                for call in (completion.tool_calls or [])
-            ]
-        )
-        result.rejected.extend(bad)
-        asked_now = _asked(meta)
-        if asked_now:
-            result.asked = asked_now
-            result.choices = _asked_choices(meta)
-        result.device = device
-        if device or not meta or round_index == MAX_ROUNDS - 1 or completion.message is None:
-            break
-        messages.append(completion.message)
-        for call_id, parsed in meta:
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": _meta_result(parsed.name, parsed.args, scene_text, memory, now),
-                }
-            )
+    result = await _once(client, messages, perceptron_tools(), effort, max_tokens)
     result.ms = _ms(started)
+    return result
+
+
+async def decide_text(
+    client: AsyncClient,
+    *,
+    profile: Profile,
+    utterance: str,
+    effort: str = "low",
+) -> Decision:
+    """Decide from words only. Evidence mode is transcript_only: no frames and no audio."""
+
+    started = time.perf_counter()
+    user_text = "\n".join(
+        [
+            "Evidence mode: transcript_only.",
+            "No current visual evidence was provided. Do not claim what the room looks like.",
+            "If the request needs the camera, say so and do not call a device tool.",
+            "Answer in one response. Confidence below 0.7 should ask instead of acting.",
+            f"Words: {utterance.strip()}",
+            f"Profile: {profile.id}. Room: living_room.",
+        ]
+    )
+    messages: list[Any] = [
+        {"role": "system", "content": system_prompt(profile)},
+        {"role": "user", "content": user_text},
+    ]
+    tools = [tool for tool in perceptron_tools() if tool["function"]["name"] not in _VISUAL_ONLY_TOOLS]
+    result = await _once(client, messages, tools, effort, 512)
+    result.ms = _ms(started)
+    return result
+
+
+async def _once(client: AsyncClient, messages: list[Any], tools: list[dict], effort: str, max_tokens: int) -> Decision:
+    """A single completion. Meta tools do not open another round."""
+
+    result = Decision()
+    try:
+        completion = await client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            tools=tools,
+            parallel_tool_calls=True,
+            reasoning_effort=effort,
+            max_completion_tokens=max_tokens,
+            timeout=LIVE_TIMEOUT_S,
+        )
+    except SDKError as exc:
+        result.error = _safe_error(exc)
+        return result
+    result.rounds = 1
+    result.usage = _usage(completion) or result.usage
+    result.reply = (completion.text or "").strip()
+    result.thinking = _remember_thinking(None, getattr(completion, "reasoning", None))
+    meta, device, bad = _split(
+        [
+            ToolCall(id=call.id, name=call.name, arguments=call.arguments or "")
+            for call in (completion.tool_calls or [])
+        ]
+    )
+    result.rejected.extend(bad)
+    asked_now = _asked(meta)
+    if asked_now:
+        result.asked = asked_now
+        result.choices = _asked_choices(meta)
+    result.device = device
+    if device:
+        result.confidence = min(call.confidence for call in device)
     return result
 
 
 def _ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
+
+
+def _remember_thinking(current: str | None, reasoning: str | None) -> str | None:
+    thought = _thinking(reasoning)
+    if not thought:
+        return current
+    if not current:
+        return thought
+    combined = f"{current}\n\n{thought}"
+    return combined[:4000]

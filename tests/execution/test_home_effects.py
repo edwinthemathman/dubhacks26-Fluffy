@@ -22,6 +22,22 @@ def _store(tmp_path, now_box):
     )
 
 
+def test_open_door_commits_and_play_music_does_not_pretend(tmp_path):
+    now_box = [NOW]
+    store = _store(tmp_path, now_box)
+    opened = store.apply("open_door", {"door": "front_door"}, "ses_demo", "pln_1", "act_door_0001")
+    assert opened.status == "succeeded"
+    assert opened.verification == "state_committed"
+    assert store.doors["front_door"] == "open"
+    assert store.doors["bedroom_door"] == "closed"
+    music = store.apply("play_music", {"query": "some jazz"}, "ses_demo", "pln_1", "act_music_0001")
+    assert music.status == "failed"
+    assert music.error_code == "spotify_needs_authorization"
+    closed = store.apply("close_door", {"door": "front_door"}, "ses_demo", "pln_1", "act_door_0002")
+    assert closed.status == "succeeded"
+    assert store.doors["front_door"] == "closed"
+
+
 def test_dim_and_warmth_and_blinds_commit(tmp_path):
     now_box = [NOW]
     store = _store(tmp_path, now_box)

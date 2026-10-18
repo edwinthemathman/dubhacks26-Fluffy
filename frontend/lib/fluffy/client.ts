@@ -59,6 +59,10 @@ export function textInputUrl(config: FluffyPublicConfig): string {
   return `${config.httpBase}/api/input/text`;
 }
 
+export function transcriptUrl(config: FluffyPublicConfig): string {
+  return `${config.httpBase}/api/input/transcript`;
+}
+
 export function questionUrl(config: FluffyPublicConfig, questionId: string): string {
   return `${config.httpBase}/api/questions/${encodeURIComponent(questionId)}/answer`;
 }

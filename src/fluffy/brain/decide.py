@@ -203,6 +203,11 @@ def system_prompt(profile: Profile) -> str:
             "confidence: 0.8-1.0 when the cue is plainly visible or heard, 0.5-0.7 when it is likely, "
             "lower when you are guessing. Still make the call when it is likely.",
             "reason: at most 6 words, about what you saw or heard, e.g. 'fell, not getting up'.",
+            "ANSWER ONCE",
+            "Put every tool for this moment in this one response. There is no follow-up round.",
+            "Summarize what you noticed in the reason fields. Do not write a long chain of thought into a tool.",
+            "Confidence below 0.7 is uncertain: the app asks and does not act. "
+            "Confidence of 0.7 or more is certain enough for one plan.",
             "",
             "STYLE",
             "Describe space relative to the person. For atypical speech, guess generously. "
