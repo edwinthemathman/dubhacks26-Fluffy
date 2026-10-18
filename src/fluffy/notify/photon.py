@@ -7,12 +7,30 @@ the message. The space id is kept for the process so a later fall reuses it.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import time
 import uuid
 from typing import Any
 
 import httpx
+
+# #region agent log
+def _dbg(hypothesis_id: str, location: str, message: str, data: dict[str, Any]) -> None:
+    try:
+        with open("/Users/edwinan/Desktop/dubhacks26/.cursor/debug-0f0361.log", "a") as handle:
+            handle.write(json.dumps({
+                "sessionId": "0f0361",
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+    except OSError:
+        pass
+# #endregion
 
 log = logging.getLogger("fluffy.notify.photon")
 
@@ -44,6 +62,7 @@ class PhotonSms:
         self.from_number = from_number.strip()
         self._client = client or httpx.Client()
         self._space_id: str | None = None
+        self._spaces: dict[str, str] = {}
 
     @property
     def configured(self) -> bool:
@@ -57,17 +76,19 @@ class PhotonSms:
             os.environ.get("PHOTON_FROM", ""),
         )
 
-    def send(self) -> None:
-        """Text the caregiver. Raises PhotonError when Photon refuses the send."""
+    def send(self, text: str | None = None, to: str | None = None) -> None:
+        """Text one number. Defaults keep the fall alert exactly as it is."""
+        body = ALERT_TEXT if text is None else text
+        handle = ALERT_TO if to is None else to
         sender = self._user(self.from_number)
-        recipient = self._user(ALERT_TO)
-        space = self._space(sender, recipient)
+        recipient = self._user(handle)
+        space = self._space(sender, recipient, handle)
         self._post(
             "messages",
             {
                 "senderId": sender,
                 "spaceId": space,
-                "content": {"type": "text", "format": "plain", "text": ALERT_TEXT},
+                "content": {"type": "text", "format": "plain", "text": body},
             },
             idempotent=True,
         )
@@ -76,16 +97,21 @@ class PhotonSms:
         body = self._post("users", {"platform": "sms", "handle": handle})
         return str(body["id"])
 
-    def _space(self, sender: str, recipient: str) -> str:
-        if self._space_id:
+    def _space(self, sender: str, recipient: str, handle: str) -> str:
+        cached = self._spaces.get(handle)
+        if cached:
+            return cached
+        if handle == ALERT_TO and self._space_id:
             return self._space_id
         body = self._post(
             "spaces",
             {"platform": "sms", "participantIds": [sender, recipient]},
             idempotent=True,
         )
-        self._space_id = str(body["id"])
-        return self._space_id
+        self._spaces[handle] = str(body["id"])
+        if handle == ALERT_TO:
+            self._space_id = self._spaces[handle]
+        return self._spaces[handle]
 
     def _post(self, path: str, body: dict[str, Any], *, idempotent: bool = False) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -116,6 +142,37 @@ def plan_alerts(plan: Any) -> bool:
     if plan is None:
         return False
     return any(action.tool == "alert_caregiver" for action in plan.actions)
+
+
+def notify_person(text: str, sms: PhotonSms | None = None) -> bool:
+    """Text the person themselves. Quiet when PERSON_PHONE is unset."""
+    number = os.environ.get("PERSON_PHONE", "").strip()
+    sender = sms if sms is not None else shared_sms()
+    # #region agent log
+    _dbg("A", "photon.py:notify_person", "person text", {
+        "chars": len(text.strip()),
+        "hasPhone": bool(number),
+        "configured": sender.configured,
+        "hasProject": bool(sender.project_id),
+        "hasFrom": bool(sender.from_number),
+    })
+    # #endregion
+    if not number or not text.strip():
+        return False
+    if not sender.configured:
+        return False
+    try:
+        sender.send(text=text, to=number)
+    except Exception as exc:
+        # #region agent log
+        _dbg("E", "photon.py:notify_person", "person text failed", {"error": str(exc)[:300]})
+        # #endregion
+        log.warning("person text failed: %s", exc)
+        return False
+    # #region agent log
+    _dbg("C", "photon.py:notify_person", "person text accepted", {"chars": len(text.strip())})
+    # #endregion
+    return True
 
 
 def notify_fall(sms: PhotonSms | None = None) -> bool:

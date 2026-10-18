@@ -34,11 +34,22 @@ class PersonState(BaseModel):
     eyes: Literal["open", "closed", "unknown"] = "unknown"
     gesture: Literal["none", "pointing", "shielding_eyes", "waving"] = "none"
     attention_target: str | None = None
+    searching: bool = False
+    looking_for: str | None = None
 
 
 class ObjectSighting(BaseModel):
     name: str
     location_desc: str
+    with_person: bool = False
+    on_floor: bool = False
+    near_person: bool = False
+
+
+class TagRead(BaseModel):
+    """Objects from a slower room scan. No people, no sounds."""
+
+    objects: list[ObjectSighting] = Field(default_factory=list)
 
 
 class SoundRead(BaseModel):

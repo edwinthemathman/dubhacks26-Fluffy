@@ -62,6 +62,23 @@ def test_alert_caregiver_sends_the_fixed_text():
     assert len(spaces) == 1
 
 
+def test_send_defaults_to_the_fall_text():
+    http = FakeHttp()
+    _sms(http).send()
+    message = next(call for call in http.calls if call["url"].endswith("/messages"))
+    assert message["json"]["content"]["text"] == ALERT_TEXT
+    assert any(call["json"]["handle"] == ALERT_TO for call in http.calls if call["url"].endswith("/users"))
+
+
+def test_notify_person_without_a_number_does_nothing(monkeypatch):
+    from fluffy.notify.photon import notify_person
+
+    monkeypatch.delenv("PERSON_PHONE", raising=False)
+    http = FakeHttp()
+    assert notify_person("You left your wallet on the side table.", _sms(http)) is False
+    assert http.calls == []
+
+
 def test_dim_lights_does_not_text():
     http = FakeHttp()
     sms = _sms(http)

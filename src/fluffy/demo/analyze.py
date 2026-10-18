@@ -15,6 +15,7 @@ from perceptron import Client, SDKError, pydantic_format, video
 
 from fluffy.brain.consent import ConsentManager
 from fluffy.brain.cues import build_help_plan, derive
+from fluffy.brain.objects import find_line, important_for, object_notices, tag_lines
 from fluffy.brain.habits import (
     clip_transition_cues,
     habit_note,
@@ -36,6 +37,7 @@ from fluffy.notify.photon import notify_plan
 from fluffy.perception.provider import ToolCall
 from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
+from fluffy.world.model import ObjectMemory
 
 MODEL = "perceptron-mk1.5"
 MAX_ROUNDS = 3
@@ -125,6 +127,10 @@ def _analyze_uploaded(
     )
     trace.append({"step": "cues", "cues": sorted(cues)})
     scene_text = _scene_text(scene)
+    memory = ObjectMemory()
+    if scene is not None:
+        memory.note_live(scene.objects_seen, clock.now())
+    notices = object_notices(scene, memory, profile, clock.now())
     room_change = room_change_line(profile.agreements.person_name, clip_transition_cues(scene))
     applicable = book.matching(cues, scene, clock.now())
 
@@ -139,6 +145,8 @@ def _analyze_uploaded(
         transcript=transcript,
         room_change=room_change,
         habit_lines=book.prompt_lines(applicable, profile),
+        tag_lines=tag_lines(memory, clock.now(), profile),
+        important=", ".join(sorted(important_for(profile))),
     )
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},
@@ -204,7 +212,7 @@ def _analyze_uploaded(
                 {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": _meta_result(parsed.name, parsed.args, scene_text),
+                    "content": _meta_result(parsed.name, parsed.args, scene_text, memory, clock.now()),
                 }
             )
 
@@ -285,6 +293,8 @@ def _analyze_uploaded(
         usage=usage,
         outcome=_outcome(consent),
         trace=trace,
+        tags=_tag_view(memory, profile, clock.now()),
+        notices=_notice_view(notices),
     )
 
 
@@ -362,23 +372,49 @@ SCENE_PROMPT = (
     "said: the words spoken, as close as you can get, including app and song names. "
     "Fill said whenever you hear speech, even if an earlier transcript was empty. "
     "Leave said empty only when nobody speaks.\n"
-    "objects_seen is only for keys, phone, glasses, wallet, pill organizer, "
-    "cane, or hearing aids.\n"
+    "objects_seen: up to 8 small portable things a person might reach for or lose: "
+    "keys, phone, wallet, glasses, hearing aids, cane, walker, pill organizer, "
+    "remote, cup, bag, book, charger. "
+    "location_desc is a fixed landmark such as 'on the side table by the sofa', never left or right. "
+    "with_person is true when it is in a hand, pocket, bag, or worn. "
+    "on_floor is true when it is on the floor. "
+    "near_person is true when it is within arm's reach. "
+    "Tag an object even if it is only partly visible.\n"
+    "searching is true when they scan surfaces, pat pockets, lift cushions, open drawers, "
+    "or retrace steps. Tidying, cooking, and reading a label are not searching. "
+    "looking_for is what they want only if they say it or clearly show it, otherwise null.\n"
+    "Add a timeline beat when an object changes hands, such as 'puts wallet on table' "
+    "or 'walks off without it'.\n"
     "summary: one sentence on how things are at the end.\n"
     "Use unknown when you cannot tell."
 )
 
 
-def scene_prompt(transcript: str = "") -> str:
+TAG_PROMPT = (
+    "Tag the small portable things you can see in this room. "
+    "Up to 8 of: keys, phone, wallet, glasses, hearing aids, cane, walker, "
+    "pill organizer, remote, cup, bag, book, charger. "
+    "location_desc is a fixed landmark, never left or right. "
+    "with_person is true if it is in a hand, pocket, bag, or worn. "
+    "on_floor is true if it is on the floor. "
+    "near_person is true if it is within arm's reach. "
+    "Tag an object even if it is only partly visible. "
+    "Skip people, furniture, and anything fixed to the room."
+)
+
+
+def scene_prompt(transcript: str = "", names: dict[str, str] | None = None) -> str:
     """Scene layout. The transcript tells the read what the words were about."""
     words = transcript.strip() or "(not transcribed yet; listen and put the words in said)"
+    named = _named_objects(names)
     return (
         f"{SCENE_PROMPT}\n"
+        f"{named}"
         f"Transcript: {words}\n"
         "Use the transcript to lay the scene out, not only to label sound. "
         "Add a timeline beat for what they said, placed next to what they were doing. "
-        "If they name keys, a phone, glasses, a wallet, a pill organizer, a cane, or hearing aids, "
-        "look for that object and put it in objects_seen when you can see it, with where it is. "
+        "If they name a portable thing, look for that object and put it in objects_seen "
+        "when you can see it, with where it is. "
         "If they say they fell, can't get up, or need help, set fell and activity to fallen or "
         "distressed, unless they are clearly upright and fine. "
         "If they say they just got home, activity can be arriving. "
@@ -386,6 +422,18 @@ def scene_prompt(transcript: str = "") -> str:
         "The picture wins when it plainly contradicts the words. "
         "summary: one sentence that includes what you see and what they said."
     )
+
+
+def tag_prompt(names: dict[str, str] | None = None) -> str:
+    named = _named_objects(names)
+    return f"{TAG_PROMPT}\n{named}".rstrip()
+
+
+def _named_objects(names: dict[str, str] | None) -> str:
+    if not names:
+        return ""
+    bits = ", ".join(f"{key} means {value}" for key, value in names.items())
+    return f"This person calls these objects: {bits}. Use those names.\n"
 
 
 def _transcribe(
@@ -530,6 +578,8 @@ def _user_text(
     answer: str = "",
     room_change: str = "",
     habit_lines: list[str] | None = None,
+    tag_lines: list[str] | None = None,
+    important: str = "",
 ) -> str:
     said = utterance or "(nothing typed)"
     words = transcript.strip() or "(none)"
@@ -560,6 +610,10 @@ def _user_text(
     if habit_lines:
         lines.append("- Habits that apply now:")
         lines.extend(f"- {line}" for line in habit_lines)
+    if tag_lines:
+        lines.append("- Tagged objects: " + "; ".join(tag_lines))
+    if important:
+        lines.append(f"- Important to this person: {important}")
     lines.extend(
         [
             f"- Transcript: {words}",
@@ -622,6 +676,8 @@ def _result(
     usage: dict[str, int],
     outcome: str,
     trace: list[dict[str, Any]],
+    tags: list[dict[str, str]] | None = None,
+    notices: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "reply": reply,
@@ -639,6 +695,8 @@ def _result(
         "rounds": rounds,
         "usage": usage,
         "trace": trace,
+        "tags": tags or [],
+        "notices": notices or [],
     }
 
 
@@ -675,12 +733,34 @@ def _outcome(consent: dict[str, Any] | None) -> str:
     return "quiet"
 
 
-def _meta_result(name: str, args: dict[str, Any], scene_text: str) -> str:
+def _tag_view(memory: ObjectMemory, profile: Profile, now: Any) -> list[dict[str, str]]:
+    return [
+        {"name": tag.name, "where": tag.location_desc}
+        for tag in memory.tags(now, important_for(profile))
+    ]
+
+
+def _notice_view(notices: list[Any]) -> list[dict[str, Any]]:
+    return [
+        {"kind": notice.kind, "name": notice.name, "text": notice.text, "choices": list(notice.choices)}
+        for notice in notices
+    ]
+
+
+def _meta_result(
+    name: str,
+    args: dict[str, Any],
+    scene_text: str,
+    memory: ObjectMemory | None = None,
+    now: Any = None,
+) -> str:
     if name == "describe_scene":
         return scene_text or "No separate scene read. Use the video."
     if name == "find_object":
-        target = args.get("name") or "that object"
-        return f"There is no saved sighting of {target}. Look in the video."
+        target = str(args.get("name") or "that object")
+        if memory is None or now is None:
+            return f"There is no saved sighting of {target}. Look in the video."
+        return find_line(memory.recall(target, now), now)
     if name == "read_text":
         return scene_text or "Read any text you can see in the video."
     if name == "look":

@@ -38,7 +38,12 @@ export function reduce(snapshot: Snapshot, event: FluffyEvent): Snapshot {
     case "sense.see":
       return {
         ...snapshot,
-        senses: { ...snapshot.senses, chips: event.chips, thumb: event.thumb ?? snapshot.senses.thumb },
+        senses: {
+          ...snapshot.senses,
+          chips: event.chips,
+          thumb: event.thumb ?? snapshot.senses.thumb,
+          tags: event.tags ?? snapshot.senses.tags,
+        },
       };
     case "sense.hear": {
       const text = event.text?.trim() ?? "";

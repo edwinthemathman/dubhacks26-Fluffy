@@ -2,6 +2,7 @@ id = "speech_cognitive"
 display_name = "Speech or cognitive disability"
 needs = ["speech", "captions", "simple_language"]
 vocabulary = ["Fluffy", "lamp", "dim", "brighter", "yes", "no", "that", "one"]
+important_objects = ["wallet", "keys", "phone", "glasses", "hearing aids", "cane", "walker", "pill organizer"]
 
 [output]
 speech = true

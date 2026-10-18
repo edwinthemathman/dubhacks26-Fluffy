@@ -35,6 +35,8 @@ export const initialHome = (): HomeState => ({
   caption: null,
 });
 
+export type TagChip = { name: string; where: string };
+
 export type FluffyEvent =
   | {
       type: "state";
@@ -47,7 +49,7 @@ export type FluffyEvent =
     }
   | { type: "profile"; profile: ProfileId; needs?: string[] }
   | { type: "turn.start"; turn_id: string; kind: TurnKind; trigger: string }
-  | { type: "sense.see"; turn_id?: string; thumb?: string; chips: string[] }
+  | { type: "sense.see"; turn_id?: string; thumb?: string; chips: string[]; tags?: TagChip[] }
   | { type: "sense.hear"; turn_id?: string; text?: string; sound?: string }
   | { type: "think"; turn_id: string; note: string }
   | {
@@ -78,6 +80,7 @@ export type ClientMessage =
   | { type: "answer"; plan_id?: string; choice: "yes" | "no" | "help"; by: "button" | "typing" | "voice"; text?: string }
   | { type: "profile.set"; profile: ProfileId }
   | { type: "room.reset" }
+  | { type: "room.scan" }
   | { type: "tts.start" }
   | { type: "tts.end" }
   | { type: "mock.play"; scene: string }
@@ -125,7 +128,7 @@ export type Snapshot = {
   home: HomeState;
   profile: ProfileId | null;
   needs: string[];
-  senses: { chips: string[]; thumb?: string; hear: string; sound?: string };
+  senses: { chips: string[]; thumb?: string; hear: string; sound?: string; tags: TagChip[] };
   turns: Turn[];
   speech: string;
   speechId: string;
@@ -140,7 +143,7 @@ export const emptySnapshot = (): Snapshot => ({
   home: initialHome(),
   profile: null,
   needs: [],
-  senses: { chips: [], hear: "" },
+  senses: { chips: [], hear: "", tags: [] },
   turns: [],
   speech: "",
   speechId: "",

@@ -81,6 +81,10 @@ class FakePerceiver:
         answer="",
         room_change="",
         habit_lines=None,
+        tag_lines=None,
+        important="",
+        memory=None,
+        now=None,
     ):
         self.decide_calls.append({"utterance": utterance, "cues": set(cues), "asked": asked, "answer": answer})
         if self.decide_gate is not None:

@@ -63,6 +63,9 @@ export function Companion() {
         >
           Play Fluffy's voice here
         </button>
+        <button type="button" className={styles.voice} onClick={() => send({ type: "room.scan" })}>
+          Scan the room
+        </button>
         <form onSubmit={onSubmit} className={styles.form}>
           <label htmlFor="typed">Type instead</label>
           <input

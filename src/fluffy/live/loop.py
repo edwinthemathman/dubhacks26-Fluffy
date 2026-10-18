@@ -23,6 +23,7 @@ from typing import Any, Callable, Protocol
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
 from fluffy.brain.cues import NOTIFY_SOUNDS, derive
 from fluffy.brain.decide import _plan_from_devices, complete_paired_request
+from fluffy.brain.objects import important_for, object_notices, tag_lines, wants_room_scan
 from fluffy.brain.habits import HabitBook, habit_note, habit_why
 from fluffy.brain.safety import CHECKIN_TEXT, SafetyEffect, SafetyMachine
 from fluffy.clock import Clock
@@ -32,10 +33,11 @@ from fluffy.live.home import HomeState
 from fluffy.live.perceive import Decision, Read, Window
 from fluffy.live.presence import RoomPresence
 from fluffy.live.voice_policy import VoicePolicy
-from fluffy.models import Plan, Trigger
-from fluffy.notify.photon import notify_fall
-from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
+from fluffy.models import Action, Plan, Trigger
+from fluffy.notify.photon import notify_fall, notify_person
+from fluffy.perception.scene import SceneState, SoundRead, TagRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
+from fluffy.world.model import WorldModel
 
 log = logging.getLogger("fluffy.live")
 
@@ -57,6 +59,8 @@ class LiveSettings:
     decide_span_s: float = 6.0
     decide_frames: int = 8
     decide_effort: str = "low"
+    scan_span_s: float = 8.0
+    scan_frames: int = 12
     stale_s: float = 10.0
     latch_s: float = 30.0
     # Below this the mic is silence, so a sound label would be a guess from the picture.
@@ -87,7 +91,12 @@ class Perceiver(Protocol):
         answer: str = "",
         room_change: str = "",
         habit_lines: list[str] | None = None,
+        tag_lines: list[str] | None = None,
+        important: str = "",
+        memory: Any = None,
+        now: Any = None,
     ) -> Decision: ...
+    async def read_tags(self, window: Window, *, profile: Profile | None = None) -> Read: ...
 
 
 class PerceptronPerceiver:
@@ -111,6 +120,9 @@ class PerceptronPerceiver:
     async def transcript(self, wav, profile):
         return await self._p.read_transcript(self.client, wav, profile)
 
+    async def read_tags(self, window, *, profile=None):
+        return await self._p.read_tags(self.client, window, profile=profile)
+
     async def decide(
         self,
         window,
@@ -124,6 +136,10 @@ class PerceptronPerceiver:
         answer="",
         room_change="",
         habit_lines=None,
+        tag_lines=None,
+        important="",
+        memory=None,
+        now=None,
     ):
         return await self._p.decide(
             self.client,
@@ -137,6 +153,10 @@ class PerceptronPerceiver:
             answer=answer,
             room_change=room_change,
             habit_lines=habit_lines,
+            tag_lines=tag_lines,
+            important=important,
+            memory=memory,
+            now=now,
         )
 
 
@@ -196,7 +216,18 @@ class LiveLoop:
         self.last_watch = 0.0
         self.pending: DecideRequest | None = None
         self.pending_hear: tuple[int, int] | None = None
-        self.tasks: dict[str, asyncio.Task | None] = {"watch": None, "hear": None, "decide": None}
+        self.tasks: dict[str, asyncio.Task | None] = {
+            "watch": None,
+            "hear": None,
+            "decide": None,
+            "scan": None,
+        }
+        self.world = WorldModel(self.clock, self.ids)
+        self.notice_fired: dict[str, Any] = {}
+        self._floor_before: dict[str, bool] = {}
+        self.texted_left: set[str] = set()
+        self.want_scan = False
+        self.scanned_empty = False
         self.open_turn: OpenTurn | None = None
         self.safety_turn: str | None = None
         self.paused = False
@@ -246,8 +277,12 @@ class LiveLoop:
             await self._answer(str(message.get("choice", "")), by=str(message.get("by", "button")))
         elif kind == "typed":
             text = str(message.get("text", "")).strip()
+            if "scan the room" in text.lower():
+                self.want_scan = True
             if text and not await self._answer_text(text, by="typing"):
                 self._request(DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text))
+        elif kind == "room.scan":
+            self.want_scan = True
         elif kind == "speech":
             await self._heard_speech(str(message.get("text", "")))
         elif kind == "profile.set" and message.get("profile") in self.profiles:
@@ -264,6 +299,8 @@ class LiveLoop:
             if self.paused:
                 self.frames.clear()
                 self.audio.clear()
+            else:
+                self.want_scan = True
         elif kind == "tts.start":
             self.mute_until = self.now() + 15
         elif kind == "tts.end":
@@ -290,6 +327,11 @@ class LiveLoop:
         self.presence = RoomPresence()
         self.room_change = ""
         self.pending = None
+        self.world = WorldModel(self.clock, self.ids)
+        self.notice_fired.clear()
+        self.texted_left.clear()
+        self.want_scan = False
+        self.scanned_empty = False
         self.emit({"type": "safety", "state": "ok"})
 
     def hello(self) -> list[dict[str, Any]]:
@@ -330,6 +372,14 @@ class LiveLoop:
                 self.last_motion = None
                 self.last_watch = now
                 self._start("watch", self._watch())
+        if (
+            self.want_scan
+            and self._idle("scan")
+            and len(self.frames.frames) >= 2
+            and self._budget()
+        ):
+            self.want_scan = False
+            self._start("scan", self._scan())
         if self.pending is not None and self._idle("decide"):
             request, self.pending = self.pending, None
             if now - request.at <= self.s.stale_s:
@@ -412,12 +462,16 @@ class LiveLoop:
         presence = self.presence.observe(scene, self.now(), self.profile.agreements.person_name)
         self.room_change = presence.room_change
         cues = self._scene_cues(scene, presence.cues)
-        self.emit({"type": "sense.see", "thumb": self._thumb(), "chips": _chips(scene, cues)})
+        self._remember_objects(scene, cues)
+        self.emit({"type": "sense.see", "thumb": self._thumb(), "chips": _chips(scene, cues, self._tag_chips()), "tags": self._tag_payload()})
         cleared = self.active_cues - cues
         for cue in cleared:
             self.latched.pop(cue, None)  # it cleared, so it may fire again later
         self.active_cues = cues
         self._on_cues(cues, trigger=" -> ".join(scene.timeline[-2:]) or scene.summary)
+        self._consider_scan(scene, cues)
+        if self.safety.phase in {"idle", "watching"} and "fall" not in cues:
+            self._handle_notices(scene, cues)
         said = scene.said.strip()
         if not said:
             if not self._recent_speech():
@@ -434,8 +488,136 @@ class LiveLoop:
                     wav=window.wav,
                     utterance=said,
                     room_change=self.room_change,
-                )
             )
+        )
+
+    def _remember_objects(self, scene: SceneState, cues: set[str]) -> None:
+        self._floor_before = self.world.objects.floor_flags()
+        self.world.objects.note_live(scene.objects_seen, self.clock.now())
+
+    def _consider_scan(self, scene: SceneState, cues: set[str]) -> None:
+        empty_for = 0.0
+        if not scene.people and self.presence.empty_first_at is not None:
+            empty_for = max(0.0, self.now() - self.presence.empty_first_at)
+        if scene.people:
+            self.scanned_empty = False
+        if "entered_room" in cues:
+            self.texted_left.clear()
+        reason = wants_room_scan(
+            empty_for_s=empty_for,
+            entered="entered_room" in cues,
+            said=scene.said or "",
+            already_scanned_empty=self.scanned_empty,
+        )
+        if reason == "empty":
+            self.scanned_empty = True
+        if reason:
+            self.want_scan = True
+
+    def _handle_notices(self, scene: SceneState, cues: set[str]) -> None:
+        departing = "left_room" in cues or any(person.activity == "leaving" for person in scene.people)
+        notices = object_notices(
+            scene,
+            self.world.objects,
+            self.profile,
+            self.clock.now(),
+            departing=departing,
+            previous_floor=self._floor_before,
+            fired=self.notice_fired,
+        )
+        for notice in notices:
+            if notice.kind in {"searching", "out_of_reach"}:
+                self._offer_notice(notice)
+            else:
+                self._tell_notice(notice)
+            if notice.kind == "left_behind" and "left_room" in cues and notice.name not in self.texted_left:
+                text = f"You left your {notice.name} {notice.location}."
+                if notify_person(text):
+                    self.texted_left.add(notice.name)
+
+    def _tell_notice(self, notice) -> None:
+        turn_id = self.ids("turn")
+        started = self.now()
+        self.emit(
+            {
+                "type": "turn.start",
+                "turn_id": turn_id,
+                "kind": "offer",
+                "trigger": notice.kind.replace("_", " "),
+            }
+        )
+        turn = OpenTurn(turn_id)
+        channels = set(self.profile.delivery_channels())
+        steps: list[tuple[str, dict[str, Any]]] = []
+        if "speech" in channels:
+            steps.append(("announce", {"text": notice.text, "room": "living_room"}))
+        if "caption" in channels:
+            steps.append(("show_caption", {"text": notice.text[:140], "size": "large", "priority": "normal"}))
+        if "light" in channels:
+            steps.append(
+                ("flash_lights", {"room": "living_room", "color": "blue", "pattern": "pulse1", "duration_s": 3})
+            )
+        if not steps:
+            steps.append(("show_caption", {"text": notice.text[:140], "size": "large", "priority": "normal"}))
+        for tool, args in steps:
+            action = Action(action_id=self.ids("act"), tool=tool, args=args)
+            call_id = self._tool_call(turn, action, notice.kind.replace("_", " "))
+            self._apply(tool, args, turn_id)
+            self.emit({"type": "tool.status", "call_id": call_id, "status": "done"})
+        self._end(turn_id, started, "acted")
+
+    def _offer_notice(self, notice) -> None:
+        turn_id = self.ids("turn")
+        started = self.now()
+        self.emit(
+            {
+                "type": "turn.start",
+                "turn_id": turn_id,
+                "kind": "offer",
+                "trigger": notice.kind.replace("_", " "),
+            }
+        )
+        request = DecideRequest("offer", notice.text[:40], set(self.active_cues), started)
+        self._ask_user(turn_id, started, request, notice.text, list(notice.choices) or None)
+
+    def _tag_chips(self) -> list[str]:
+        chips = []
+        for tag in self.world.objects.tags(self.clock.now(), important_for(self.profile))[:4]:
+            if tag.on_floor:
+                place = "floor"
+            else:
+                words = [word for word in tag.location_desc.split() if word not in {"the", "a", "on", "by", "near"}]
+                place = words[-1] if words else "room"
+            chips.append(f"{tag.name} · {place}")
+        return chips
+
+    def _tag_payload(self) -> list[dict[str, str]]:
+        return [
+            {"name": tag.name, "where": tag.location_desc}
+            for tag in self.world.objects.tags(self.clock.now(), important_for(self.profile))
+        ]
+
+    async def _scan(self) -> None:
+        epoch = self.epoch
+        window = self._window(self.s.scan_span_s, self.s.scan_frames)
+        if not hasattr(self.perceiver, "read_tags"):
+            return
+        if window is None:
+            self.want_scan = True
+            return
+        read = await self.perceiver.read_tags(window, profile=self.profile)
+        if not self._live(epoch) or read.error or not isinstance(read.value, TagRead):
+            return
+        self.world.objects.note_scan(read.value.objects, self.clock.now())
+        scene = self.scene or SceneState()
+        self.emit(
+            {
+                "type": "sense.see",
+                "thumb": self._thumb(),
+                "chips": _chips(scene, self.active_cues, self._tag_chips()),
+                "tags": self._tag_payload(),
+            }
+        )
 
     def _scene_cues(self, scene: SceneState, presence: set[str]) -> set[str]:
         """Live arrivals come from the room tracker, not one scene read."""
@@ -574,6 +756,8 @@ class LiveLoop:
             return
         self.speech_at = self.now()
         self.last_said = text
+        if "scan the room" in text.lower():
+            self.want_scan = True
         self.emit({"type": "sense.hear", "text": text})
         if await self._answer_text(text, by="voice"):
             return
@@ -711,6 +895,10 @@ class LiveLoop:
             answer=request.answer,
             room_change=request.room_change,
             habit_lines=self.habits.prompt_lines(applicable, self.profile),
+            tag_lines=tag_lines(self.world.objects, self.clock.now(), self.profile),
+            important=", ".join(sorted(important_for(self.profile))),
+            memory=self.world.objects,
+            now=self.clock.now(),
         )
         if not self._live(epoch):
             self._end(turn_id, started, "nothing", note="stopped")
@@ -963,6 +1151,7 @@ class LiveLoop:
             if effect.kind == "checkin":
                 self.emit({"type": "safety", "state": SAFETY_UI.get(self.safety.phase, "checkin1")})
                 self.emit({"type": "ask", "turn_id": turn.turn_id, "question": effect.text, "choices": ["I'm okay", "Need help"]})
+                notify_person(effect.text)
             for plan in effect.plans:
                 for action in plan.actions:
                     why = {"alert_caregiver": "no answer or asked for help"}.get(action.tool, "safety check-in")
@@ -1003,7 +1192,7 @@ def _brief(reason: str) -> str:
     return text
 
 
-def _chips(scene: SceneState, cues: set[str]) -> list[str]:
+def _chips(scene: SceneState, cues: set[str], tags: list[str] | None = None) -> list[str]:
     chips: list[str] = []
     for person in scene.people[:2]:
         if person.fell:
@@ -1026,6 +1215,7 @@ def _chips(scene: SceneState, cues: set[str]) -> list[str]:
     chips.extend(label for label in scene.sounds if label not in {"none", "speech"})
     for cue in sorted(cues):
         chips.append(_CUE_LABEL.get(cue) or f"cue: {cue.replace('_', ' ')}")
+    chips.extend(tags or [])
     seen: list[str] = []
     for chip in chips:
         if chip not in seen:

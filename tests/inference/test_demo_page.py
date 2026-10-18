@@ -21,6 +21,7 @@ def test_clip_page_loads():
     assert "Nothing to do" in response.text
     assert "Transcript" in response.text
     assert "How Fluffy decided" in response.text
+    assert "Tagged" in response.text
 
 
 def test_analyze_requires_a_video():

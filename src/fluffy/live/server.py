@@ -166,6 +166,7 @@ def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
         live: LiveLoop = state["loop"]
         feeds += 1
         live.paused = False
+        live.want_scan = True
         try:
             while True:
                 message = await socket.receive()

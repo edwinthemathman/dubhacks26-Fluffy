@@ -2,6 +2,7 @@
 
 import hashlib
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
-from fluffy.perception.scene import SceneState
+from fluffy.perception.scene import ObjectSighting, SceneState
 
 HandledAs = Literal["safety", "notify", "offer", "context"]
 OBJECT_FRESH = timedelta(minutes=15)
@@ -53,6 +54,23 @@ class Recall(BaseModel):
     location_desc: str | None = None
     last_seen_at: datetime | None = None
     status: Literal["fresh", "stale", "unknown"]
+    home_desc: str | None = None
+    unconfirmed: bool = False
+    with_person: bool = False
+    on_floor: bool = False
+    near_person: bool = False
+
+
+@dataclass
+class Tag:
+    name: str
+    location_desc: str
+    last_seen_at: datetime
+    with_person: bool = False
+    on_floor: bool = False
+    near_person: bool = False
+    home_desc: str | None = None
+    unconfirmed: bool = False
 
 
 class ContextSnapshot(BaseModel):
@@ -63,41 +81,116 @@ class ContextSnapshot(BaseModel):
 
 class ObjectMemory:
     def __init__(self) -> None:
-        self._items: dict[str, tuple[datetime, str, str]] = {}
+        self._items: dict[str, Tag] = {}
 
     def update(self, name: str, location_desc: str, at: datetime) -> None:
-        key = _object_key(name)
-        self._items[key] = (at, location_desc, name.strip())
+        self.note_live([ObjectSighting(name=name, location_desc=location_desc)], at)
+
+    def note_scan(self, sightings: list[ObjectSighting], at: datetime) -> None:
+        """A room scan sets the usual spot. The first time, that is also last seen."""
+        for item in sightings:
+            key = _object_key(item.name)
+            if not key:
+                continue
+            place = item.location_desc.strip() or "in the room"
+            tag = self._items.get(key)
+            if tag is None:
+                self._items[key] = Tag(
+                    name=item.name.strip(),
+                    location_desc=place,
+                    last_seen_at=at,
+                    with_person=item.with_person,
+                    on_floor=item.on_floor,
+                    near_person=item.near_person,
+                    home_desc=place,
+                )
+            else:
+                tag.home_desc = place
+                tag.name = item.name.strip() or tag.name
+                tag.unconfirmed = False
+
+    def note_live(self, sightings: list[ObjectSighting], at: datetime) -> None:
+        """Update last seen. An object missing from this read stays, marked unconfirmed."""
+        seen: set[str] = set()
+        for item in sightings:
+            key = _object_key(item.name)
+            if not key:
+                continue
+            seen.add(key)
+            place = item.location_desc.strip() or "in the room"
+            tag = self._items.get(key)
+            if tag is None:
+                self._items[key] = Tag(
+                    name=item.name.strip(),
+                    location_desc=place,
+                    last_seen_at=at,
+                    with_person=item.with_person,
+                    on_floor=item.on_floor,
+                    near_person=item.near_person,
+                )
+                continue
+            if place != tag.location_desc or item.with_person:
+                tag.location_desc = place
+            tag.with_person = item.with_person
+            tag.on_floor = item.on_floor
+            tag.near_person = item.near_person
+            tag.last_seen_at = at
+            tag.unconfirmed = False
+            tag.name = item.name.strip() or tag.name
+        for key, tag in self._items.items():
+            if key not in seen:
+                tag.unconfirmed = True
+
+    def floor_flags(self) -> dict[str, bool]:
+        return {key: tag.on_floor for key, tag in self._items.items()}
+
+    def tags(self, now: datetime, important: set[str] | None = None) -> list[Tag]:
+        wanted = important or set()
+        rows = [
+            tag
+            for tag in self._items.values()
+            if now - tag.last_seen_at <= OBJECT_FRESH or tag.home_desc
+        ]
+        rows.sort(key=lambda tag: (0 if _object_key(tag.name) in wanted else 1, tag.name.lower()))
+        return rows
 
     def recall(self, name: str, now: datetime) -> Recall:
-        key = _object_key(name)
-        found = self._items.get(key)
-        if found is None:
-            for stored, value in self._items.items():
-                if key in stored or stored in key:
-                    found = value
-                    break
+        found = self._find(name)
         if found is None:
             return Recall(name=name, status="unknown")
-        seen_at, location, display = found
         status: Literal["fresh", "stale"] = (
-            "fresh" if now - seen_at <= OBJECT_FRESH else "stale"
+            "fresh" if now - found.last_seen_at <= OBJECT_FRESH else "stale"
         )
         return Recall(
-            name=display,
-            location_desc=location,
-            last_seen_at=seen_at,
+            name=found.name,
+            location_desc=found.location_desc,
+            last_seen_at=found.last_seen_at,
             status=status,
+            home_desc=found.home_desc,
+            unconfirmed=found.unconfirmed,
+            with_person=found.with_person,
+            on_floor=found.on_floor,
+            near_person=found.near_person,
         )
 
     def lines(self, now: datetime) -> list[str]:
         rows = []
-        for seen_at, location, display in self._items.values():
-            if now - seen_at > MEMORY_WINDOW:
+        for tag in self._items.values():
+            if now - tag.last_seen_at > MEMORY_WINDOW and not tag.home_desc:
                 continue
-            age = int((now - seen_at).total_seconds() // 60)
-            rows.append(f"{display}: {location} ({age} min ago)")
+            age = int((now - tag.last_seen_at).total_seconds() // 60)
+            rows.append(f"{tag.name}: {tag.location_desc} ({age} min ago)")
         return rows
+
+    def _find(self, name: str) -> Tag | None:
+        key = _object_key(name)
+        found = self._items.get(key)
+        if found is not None:
+            return found
+        for stored, tag in self._items.items():
+            if key and (key in stored or stored in key):
+                return tag
+        return None
 
 
 class WorldModel:
@@ -117,8 +210,7 @@ class WorldModel:
     def observe_scene(self, scene: SceneState) -> list[DerivedEvent]:
         now = self.clock.now()
         self.latest_scene = scene
-        for item in scene.objects_seen:
-            self.objects.update(item.name, item.location_desc, now)
+        self.objects.note_live(scene.objects_seen, now)
 
         found: list[DerivedEvent] = []
         found.extend(

@@ -22,6 +22,7 @@ from fluffy.demo.analyze import (
     MODEL,
     SOUND_PROMPT,
     scene_prompt,
+    tag_prompt,
     _meta_result,
     _parse_model,
     _safe_error,
@@ -32,7 +33,7 @@ from fluffy.demo.analyze import (
 )
 from fluffy.models.tool_catalog import ParsedCall, perceptron_tools
 from fluffy.perception.provider import ToolCall
-from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead
+from fluffy.perception.scene import SceneState, SoundRead, TagRead, TranscriptRead
 from fluffy.profile.model import Profile
 
 LIVE_TIMEOUT_S = 30
@@ -106,7 +107,7 @@ async def read_scene(
                             "type": "text",
                             "text": (
                                 f"{LIVE_NOTE.format(seconds=window.seconds)}\n"
-                                f"{scene_prompt(transcript)}"
+                                f"{scene_prompt(transcript, profile.object_names if profile else None)}"
                             ),
                         },
                     ],
@@ -121,6 +122,33 @@ async def read_scene(
         return Read(error=_safe_error(exc), ms=_ms(started))
     scene, error = _parse_model(completion.text, SceneState, "Scene read")
     return Read(value=scene, error=error, ms=_ms(started), usage=_usage(completion))
+
+
+async def read_tags(client: AsyncClient, window: Window, *, profile: Profile | None = None) -> Read:
+    """A slower tag-only look. More frames, low reasoning, no people or sounds."""
+    started = time.perf_counter()
+    names = profile.object_names if profile is not None else None
+    try:
+        completion = await client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        *window.media(),
+                        {"type": "text", "text": tag_prompt(names)},
+                    ],
+                }
+            ],
+            response_format=pydantic_format(TagRead, strict=False),
+            reasoning_effort="low",
+            max_completion_tokens=1024,
+            timeout=LIVE_TIMEOUT_S,
+        )
+    except SDKError as exc:
+        return Read(error=_safe_error(exc), ms=_ms(started))
+    tags, error = _parse_model(completion.text, TagRead, "Room scan")
+    return Read(value=tags, error=error, ms=_ms(started), usage=_usage(completion))
 
 
 async def read_transcript(client: AsyncClient, wav: bytes, profile: Profile | None) -> Read:
@@ -269,6 +297,10 @@ async def decide(
     answer: str = "",
     room_change: str = "",
     habit_lines: list[str] | None = None,
+    tag_lines: list[str] | None = None,
+    important: str = "",
+    memory: Any = None,
+    now: Any = None,
 ) -> Decision:
     """The decision call with tools. Only device calls from the last round count."""
     started = time.perf_counter()
@@ -279,7 +311,7 @@ async def decide(
         transcript = utterance.strip()
     user_text = (
         f"{LIVE_NOTE.format(seconds=window.seconds)}\n"
-        f"{_user_text(profile, utterance, scene, cues, transcript=transcript, asked=asked, answer=answer, room_change=room_change, habit_lines=habit_lines)}"
+        f"{_user_text(profile, utterance, scene, cues, transcript=transcript, asked=asked, answer=answer, room_change=room_change, habit_lines=habit_lines, tag_lines=tag_lines, important=important)}"
     )
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},
@@ -324,7 +356,7 @@ async def decide(
                 {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": _meta_result(parsed.name, parsed.args, scene_text),
+                    "content": _meta_result(parsed.name, parsed.args, scene_text, memory, now),
                 }
             )
     result.ms = _ms(started)

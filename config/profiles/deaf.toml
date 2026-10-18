@@ -2,6 +2,7 @@ id = "deaf"
 display_name = "Deaf or hard of hearing"
 needs = ["captions", "light"]
 vocabulary = ["Fluffy", "doorbell", "yes", "no", "caption"]
+important_objects = ["wallet", "keys", "phone", "glasses", "hearing aids", "cane", "walker", "pill organizer"]
 
 [output]
 speech = false

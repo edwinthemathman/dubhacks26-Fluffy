@@ -9,7 +9,11 @@ from fluffy.profile.model import Profile
 def load_profile(path: Path) -> Profile:
     with path.open("rb") as handle:
         data = tomllib.load(handle)
-    return Profile.model_validate(data)
+    names = data.pop("objects", None)
+    profile = Profile.model_validate(data)
+    if isinstance(names, dict):
+        profile.object_names = {str(key): str(value) for key, value in names.items()}
+    return profile
 
 
 def load_profiles(directory: Path) -> dict[str, Profile]:

@@ -179,6 +179,13 @@ def system_prompt(profile: Profile) -> str:
             "ask_user uses this same shape. The reason field stays a few words about the cue. "
             "The reply is the question. If you call no tools, leave the reply empty.",
             "",
+            "KEEPING THINGS CLOSE",
+            "- Searching with no word said: call ask_user with choices taken from the tagged objects.",
+            "- They name or choose an object: call find_object, then announce and show_caption "
+            "saying where it is relative to them now.",
+            "- Left behind or dropped: announce and show_caption. Add flash_lights for a Deaf profile.",
+            "- Never describe an object the camera hasn't tagged or can't see.",
+            "",
             "CONSENT IS HANDLED FOR YOU",
             "A tool call is only a proposal. The app asks the person before anything changes, "
             f'and asks "Should I call {caregiver} for help?" before any caregiver call. '
