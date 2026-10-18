@@ -32,9 +32,41 @@ DistressSign = Literal[
 ]
 
 
+# What the camera plainly shows a hand, head, or body doing. These labels never
+# say what the person wants. Fluffy's own rules (brain/instincts.py) turn a
+# pattern of them into a guess, so one scratch of the nose means nothing.
+ActionLabel = Literal[
+    "touch_face_eyes",
+    "touch_head_top",
+    "pat_chest_pocket",
+    "hold_chest",
+    "pat_pants_pockets",
+    "pat_jacket_or_bag",
+    "touch_ear",
+    "cup_ear",
+    "look_at_surfaces",
+    "look_down_beside_seat",
+    "lift_or_move_things",
+    "reach_steady",
+    "hold_text_far_or_squint",
+    "stop_and_look_around",
+    "turn_back",
+    "press_remote_repeatedly",
+]
+YesNo = Literal["yes", "no", "unclear"]
+Zone = Literal["door", "sofa", "chair", "table", "kitchen_counter", "bed", "hallway", "other", "unknown"]
+
+
+class PersonAction(BaseModel):
+    label: ActionLabel
+    count: int = Field(default=1, ge=1, le=9)
+
+
 class PersonState(BaseModel):
     """How a person is at the END of the clip, plus whether they fell during it."""
 
+    # A person on a TV, in a photo, poster, or mirror. Fluffy drops these.
+    on_screen: bool = False
     fell: bool = False
     posture: Literal["lying", "sitting", "standing", "walking", "unknown"] = "unknown"
     activity: Activity = "unknown"
@@ -46,6 +78,14 @@ class PersonState(BaseModel):
     attention_target: str | None = None
     searching: bool = False
     looking_for: str | None = None
+    # Plain observations for the instinct rules. Empty actions is the usual answer.
+    actions: list[PersonAction] = Field(default_factory=list, max_length=4)
+    wearing_glasses: YesNo = "unclear"
+    holding: list[str] = Field(default_factory=list)
+    speaking: YesNo = "unclear"
+    on_phone: YesNo = "unclear"
+    face_visible: YesNo = "unclear"
+    zone: Zone = "unknown"
 
 
 class ObjectSighting(BaseModel):
@@ -62,6 +102,7 @@ class ObjectSighting(BaseModel):
     )
     on_floor: bool = Field(default=False, description="True if it is on the floor at the end.")
     near_person: bool = Field(default=False, description="True if it is within arm's reach at the end.")
+    on_head: bool = Field(default=False, description="True only for glasses pushed up on top of the head.")
 
 
 class TagRead(BaseModel):
