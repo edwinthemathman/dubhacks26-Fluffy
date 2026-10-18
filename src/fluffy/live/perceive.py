@@ -241,6 +241,7 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("alarm", ("alarm", "siren", "smoke detector", "beeping", "beeps")),
     ("snoring", ("snore", "snoring")),
     ("door", ("door opens", "door closes", "door creak", "latch", "keys jingle")),
+    ("throat_clear", ("clears throat", "clearing throat", "clearing their throat", "ahem", "throat clear")),
     ("cough", ("cough", "coughs", "coughing")),
     ("speech", ("speak", "speaks", "says", "said", "talk", "voice", "words")),
 ]

@@ -60,6 +60,27 @@ label = "ceiling light"
 id = "blinds.living_window"
 label = "living room window blinds"
 
+[[surfaces]]
+name = "table"
+
+[[surfaces]]
+name = "desk"
+
+[[surfaces]]
+name = "side table"
+
+[[surfaces]]
+name = "coffee table"
+
+[[surfaces]]
+name = "counter"
+
+[[surfaces]]
+name = "sofa"
+
+[[surfaces]]
+name = "nightstand"
+
 [[media]]
 id = "arrival_song"
 provider = "spotify"

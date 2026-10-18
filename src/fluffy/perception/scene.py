@@ -22,6 +22,7 @@ SoundLabel = Literal[
     "speech",
     "clap",
     "cough",
+    "throat_clear",
     "none",
 ]
 # Visible signs that someone is hurt. None of these need words.
@@ -56,10 +57,12 @@ ActionLabel = Literal[
     "turn_back",
     "press_remote_repeatedly",
     "touch_throat",
+    "rub_throat",
     "cough",
     "clutch_throat",
 ]
 Side = Literal["left", "right", "middle", "front", "back", "unclear"]
+Expression = Literal["neutral", "confused", "discomfort", "pain", "panic", "unclear"]
 Facing = Literal["camera", "away", "side", "unclear"]
 YesNo = Literal["yes", "no", "unclear"]
 Zone = Literal["door", "sofa", "chair", "table", "kitchen_counter", "bed", "hallway", "other", "unknown"]
@@ -92,6 +95,7 @@ class PersonState(BaseModel):
     # Plain observations for the instinct rules. Empty actions is the usual answer.
     actions: list[PersonAction] = Field(default_factory=list, max_length=4)
     wearing_glasses: YesNo = "unclear"
+    expression: Expression = "unclear"
     holding: list[str] = Field(default_factory=list)
     speaking: YesNo = "unclear"
     on_phone: YesNo = "unclear"
@@ -119,6 +123,15 @@ class ObjectSighting(BaseModel):
         default="unclear",
         description="Which part of the landmark the object is on, as seen in the picture.",
     )
+
+
+class ActionRead(BaseModel):
+    """A short look at hands and face. Empty actions is the usual answer."""
+
+    actions: list[PersonAction] = Field(default_factory=list, max_length=4)
+    expression: Expression = "unclear"
+    wearing_glasses: YesNo = "unclear"
+    holding: list[str] = Field(default_factory=list)
 
 
 class TagRead(BaseModel):

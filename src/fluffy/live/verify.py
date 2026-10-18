@@ -114,7 +114,7 @@ def confirm(guess: Guess, answers: dict[str, str]) -> Guess | None:
     if not _agrees(need, answers):
         return None
     if need == "glasses" and answers.get("on_head") == "yes":
-        return rewrite(guess, "I think your glasses might be on top of your head.")
+        return rewrite(guess, "I think your glasses are on top of your head.")
     return _marked(guess, answers)
 
 

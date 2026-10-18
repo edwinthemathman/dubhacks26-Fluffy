@@ -133,7 +133,7 @@ def test_wearing_glasses_is_not_a_search():
 def test_hold_chest_is_safety_and_cancels_the_search():
     clock = FrozenClock()
     scene = SceneState(
-        people=[_person(actions=_acts("hold_chest", "touch_face_eyes", "pat_chest_pocket"))],
+        people=[_person(expression="pain", actions=_acts("hold_chest", "touch_face_eyes", "pat_chest_pocket"))],
         objects_seen=[_sight("glasses", "on the side table")],
     )
     guess = _guess(scene, ObjectMemory(), clock.now())
@@ -218,7 +218,7 @@ def test_water_names_the_cup_and_asks_when_none_is_tagged():
     missing = SceneState(people=[_person(actions=_acts("touch_throat", "cough"))])
     asked = _guess(missing, ObjectMemory(), clock.now())
     assert asked is not None and asked.kind == "ask"
-    assert asked.text == "Would you like some water?"
+    assert asked.text == "Would you like some water? I can't see your water bottle from here."
     holding = SceneState(
         people=[_person(holding=["cup"], actions=_acts("touch_throat", "cough"))],
         objects_seen=[_sight("cup", "in their hand", with_person=True)],
@@ -231,7 +231,7 @@ def test_water_names_the_cup_and_asks_when_none_is_tagged():
 def test_clutching_the_throat_is_safety_not_a_drink():
     clock = FrozenClock()
     scene = SceneState(
-        people=[_person(actions=_acts("clutch_throat", "cough"))],
+        people=[_person(expression="pain", actions=_acts("clutch_throat", "cough"))],
         objects_seen=[_sight("cup", "on the kitchen counter")],
     )
     guess = _guess(scene, ObjectMemory(), clock.now())

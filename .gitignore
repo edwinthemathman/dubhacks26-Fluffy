@@ -11,6 +11,7 @@ build/
 node_modules/
 .mypy_cache/
 .ruff_cache/
+logs/
 
 # Local secrets and provider token caches. Example files stay tracked.
 .env.*
