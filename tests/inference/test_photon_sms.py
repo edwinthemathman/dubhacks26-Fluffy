@@ -1,9 +1,13 @@
 """Photon texts the caregiver only for a fall alert. HTTP is faked."""
 
+import os
+
 from fluffy.brain.cues import build_help_plan
 from fluffy.clock import FrozenClock
-from fluffy.notify.photon import ALERT_TEXT, ALERT_TO, PhotonSms, notify_plan
+from fluffy.notify.photon import PhotonSms, notify_plan
 from tests.inference.helpers import dim_plan, profiles
+
+CAREGIVER = "+15550002222"
 
 
 class _Response:
@@ -23,7 +27,7 @@ class FakeHttp:
     def post(self, url, headers=None, json=None, timeout=None):
         self.calls.append({"url": url, "headers": headers or {}, "json": json})
         if url.endswith("/users"):
-            user_id = "caregiver" if json["handle"] == ALERT_TO else "sender"
+            user_id = "caregiver" if json["handle"] == CAREGIVER else "sender"
             return _Response(200, {"id": user_id})
         if url.endswith("/spaces"):
             return _Response(200, {"id": "space-1"})
@@ -41,7 +45,8 @@ def _sms(http: FakeHttp) -> PhotonSms:
     )
 
 
-def test_alert_caregiver_sends_the_fixed_text():
+def test_alert_caregiver_sends_the_plan_message(monkeypatch):
+    monkeypatch.setenv("PHOTON_CAREGIVER_HANDLE", CAREGIVER)
     http = FakeHttp()
     sms = _sms(http)
     plan = build_help_plan(FrozenClock(), profiles()["blind"])
@@ -49,9 +54,9 @@ def test_alert_caregiver_sends_the_fixed_text():
     assert notify_plan(plan, sms) is True
 
     users = [call["json"]["handle"] for call in http.calls if call["url"].endswith("/users")]
-    assert ALERT_TO in users
+    assert CAREGIVER in users
     message = next(call for call in http.calls if call["url"].endswith("/messages"))
-    assert message["json"]["content"] == {"type": "text", "format": "plain", "text": ALERT_TEXT}
+    assert message["json"]["content"] == {"type": "text", "format": "plain", "text": "Possible fall"}
     assert message["json"]["senderId"] == "sender"
     assert message["json"]["spaceId"] == "space-1"
     assert message["headers"]["Authorization"] == "Bearer test-key"
@@ -60,6 +65,7 @@ def test_alert_caregiver_sends_the_fixed_text():
     notify_plan(plan, sms)
     spaces = [call for call in http.calls if call["url"].endswith("/spaces")]
     assert len(spaces) == 1
+    assert os.environ["PHOTON_CAREGIVER_HANDLE"] == CAREGIVER
 
 
 def test_dim_lights_does_not_text():

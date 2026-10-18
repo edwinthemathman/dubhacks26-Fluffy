@@ -100,7 +100,7 @@ export function FluffyStreamProvider({ children }: { children: ReactNode }) {
       socket.onclose = () => {
         if (wsRef.current === socket) wsRef.current = null;
         if (stopped) return;
-        setSnapshot((current) => ({ ...current, link: "offline" }));
+        setSnapshot((current) => ({ ...current, link: "reconnecting" }));
         timer = window.setTimeout(connect, Math.min(4000, 500 * 2 ** retry));
         retry += 1;
       };

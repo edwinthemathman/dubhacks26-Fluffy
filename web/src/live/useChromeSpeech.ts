@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ClientMessage } from "../stream/events";
 
 // Chrome streams the mic and returns words while the person is still talking.
@@ -32,6 +32,11 @@ export function useChromeSpeech(
   send: (message: ClientMessage) => void,
   isSpeaking: () => boolean,
 ) {
+  const sendRef = useRef(send);
+  const speakingRef = useRef(isSpeaking);
+  sendRef.current = send;
+  speakingRef.current = isSpeaking;
+
   useEffect(() => {
     if (!enabled) return;
     const Ctor = speechCtor();
@@ -43,12 +48,12 @@ export function useChromeSpeech(
     let stopped = false;
 
     recognition.onresult = (event) => {
-      if (isSpeaking()) return;
+      if (speakingRef.current()) return;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const phrase = event.results[i];
         if (!phrase.isFinal) continue;
         const text = phrase[0].transcript.trim();
-        if (text) send({ type: "speech", text });
+        if (text) sendRef.current({ type: "speech", text });
       }
     };
     recognition.onerror = (event) => {
@@ -72,5 +77,5 @@ export function useChromeSpeech(
       recognition.onend = null;
       recognition.stop();
     };
-  }, [enabled, send, isSpeaking]);
+  }, [enabled]);
 }

@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 *.pyc
 .env
+.spotify_token
 *.egg-info/
 dist/
 build/

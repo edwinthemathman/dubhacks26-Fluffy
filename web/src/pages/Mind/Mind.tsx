@@ -62,7 +62,9 @@ export function Mind() {
             <div className={styles.titleRow}>
               <h1 className="screen-title">Fluffy’s mind</h1>
               <ProfileBadge profile={snapshot.profile} />
-              <span className="pill quiet">{scene ? "Recorded run" : snapshot.link === "live" ? "Live" : "Waiting"}</span>
+              <span className="pill quiet">
+                {scene ? "Recorded run" : snapshot.link === "live" ? "Live" : snapshot.link === "reconnecting" ? "Reconnecting…" : "Waiting"}
+              </span>
             </div>
             <p className={styles.senses}>
               <Eye size={16} aria-hidden="true" />

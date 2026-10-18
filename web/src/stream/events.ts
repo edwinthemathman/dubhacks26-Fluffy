@@ -21,7 +21,9 @@ export type HomeState = {
   lamp: { luminosity: number; warmth: "warm" | "neutral" | "cool" };
   ceiling: { luminosity: number };
   blinds: number;
-  speaker: { sound: string | null; volume: number };
+  door: { front_door: "open" | "closed"; bedroom_door: "open" | "closed" };
+  speaker: { sound: string | null; volume: number; track: string | null };
+  phone: { mode: string | null; to: string | null; preview: string | null; delivered: boolean };
   flash: { active: boolean; color: string | null; pattern: string | null };
   caption: string | null;
 };
@@ -30,7 +32,9 @@ export const initialHome = (): HomeState => ({
   lamp: { luminosity: 78, warmth: "warm" },
   ceiling: { luminosity: 36 },
   blinds: 55,
-  speaker: { sound: null, volume: 0 },
+  door: { front_door: "closed", bedroom_door: "closed" },
+  speaker: { sound: null, volume: 0, track: null },
+  phone: { mode: null, to: null, preview: null, delivered: false },
   flash: { active: false, color: null, pattern: null },
   caption: null,
 });
@@ -41,7 +45,9 @@ export type FluffyEvent =
       lamp?: Partial<HomeState["lamp"]>;
       ceiling?: Partial<HomeState["ceiling"]>;
       blinds?: number;
+      door?: Partial<HomeState["door"]>;
       speaker?: Partial<HomeState["speaker"]>;
+      phone?: Partial<HomeState["phone"]>;
       flash?: Partial<HomeState["flash"]>;
       caption?: string | null;
     }
@@ -69,7 +75,20 @@ export type FluffyEvent =
   | { type: "ask"; turn_id: string; question: string; choices?: string[] }
   | { type: "ask.answer"; turn_id: string; by: AskBy; choice?: string }
   | { type: "say"; turn_id?: string; text: string; say_id?: string; voice?: boolean }
-  | { type: "turn.end"; turn_id: string; ms: number; outcome: Outcome }
+  | {
+      type: "turn.end";
+      turn_id: string;
+      ms: number;
+      outcome: Outcome;
+      timings?: {
+        frame_age_ms: number | null;
+        scene_read_ms: number | null;
+        decide_wait_ms: number | null;
+        decide_ms: number | null;
+        speech_to_tool_ms: number | null;
+      };
+    }
+  | { type: "phone"; from?: string; text: string }
   | { type: "turn.raw"; turn_id: string; text: string }
   | { type: "safety"; state: SafetyState }
   | { type: "fallback"; active: boolean; scene?: string };
@@ -133,7 +152,7 @@ export type Snapshot = {
   safety: SafetyState;
   fallback: boolean;
   alerts: AlertItem[];
-  link: "idle" | "live" | "mock" | "offline";
+  link: "idle" | "live" | "mock" | "offline" | "reconnecting";
 };
 
 export const emptySnapshot = (): Snapshot => ({

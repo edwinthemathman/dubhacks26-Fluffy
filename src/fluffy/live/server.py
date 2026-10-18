@@ -23,6 +23,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from fluffy.brain.habits import load_habits
 from fluffy.live.loop import LiveLoop, PerceptronPerceiver
@@ -35,6 +36,12 @@ AUDIO = 2
 FRAME_HEADER = struct.Struct("<BQf")
 
 log = logging.getLogger("fluffy.live")
+
+
+class PhotonReply(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    sender: str = Field(alias="from")
+    text: str
 
 
 class Hub:
@@ -112,7 +119,14 @@ def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
             "profile": live.profile.id,
             "paused": live.paused,
             "voice": voice.available,
+            "timings": live.timings.as_dict(),
         }
+
+    @app.post("/api/integrations/photon/reply")
+    def photon_reply(body: PhotonReply) -> dict[str, bool]:
+        live: LiveLoop = state["loop"]
+        live.on_photon_reply(body.sender, body.text)
+        return {"ok": True}
 
     @app.get("/api/voice/{say_id}")
     async def voice(say_id: str):

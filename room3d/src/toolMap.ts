@@ -34,6 +34,7 @@ export const TOOL_MAP: Record<string, ToolBinding> = {
   photon_send: { target: "phone", action: "text" },
   send_message: { target: "phone", action: "text" },
   call_person: { target: "phone", action: "call" },
+  alert_caregiver: { target: "phone", action: "text" },
   ask_user: { target: "ask", action: "ask" },
   ask_clarification: { target: "ask", action: "ask" },
 };

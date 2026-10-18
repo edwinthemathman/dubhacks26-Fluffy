@@ -3,6 +3,11 @@
 The canonical registry (handlers, home config, schema export) belongs to
 Part 1. This catalog is the subset a decision call needs: names, argument
 checks, action class, and the function schemas sent to Perceptron.
+
+When the execution registry should own the newer device tools, copy
+open_door, close_door, play_music, stop_music, send_text, and call_person
+into src/fluffy/tools/home_tools.py. Do not rename the tools already used
+in decide.py.
 """
 
 import json
@@ -45,6 +50,28 @@ class PlaySoundArgs(BaseModel):
 
 class StopSoundArgs(BaseModel):
     room: Literal["living_room"]
+
+
+class DoorArgs(BaseModel):
+    door: Literal["front_door", "bedroom_door"]
+
+
+class PlayMusicArgs(BaseModel):
+    query: str | None = None
+    volume: int | None = Field(default=None, ge=0, le=100)
+
+
+class StopMusicArgs(BaseModel):
+    pass
+
+
+class SendTextArgs(BaseModel):
+    to: str
+    message: str = Field(max_length=300)
+
+
+class CallPersonArgs(BaseModel):
+    to: str
 
 
 class FlashLightsArgs(BaseModel):
@@ -179,6 +206,27 @@ SPECS: dict[str, ToolSpec] = {
             PlaySoundArgs,
         ),
         _spec("stop_sound", "Stop the sound playing in the room.", "comfort", StopSoundArgs),
+        _spec("open_door", "Open a door in the mock home. front_door or bedroom_door.", "comfort", DoorArgs),
+        _spec("close_door", "Close a door in the mock home. front_door or bedroom_door.", "comfort", DoorArgs),
+        _spec(
+            "play_music",
+            "Play a song on Spotify. query is the song or mood. The person is asked first.",
+            "comfort",
+            PlayMusicArgs,
+        ),
+        _spec("stop_music", "Pause Spotify.", "comfort", StopMusicArgs),
+        _spec(
+            "send_text",
+            "Text a saved contact. Always ask first, even when they clearly asked you to send it.",
+            "comfort",
+            SendTextArgs,
+        ),
+        _spec(
+            "call_person",
+            "Show a demo call animation. Photon does not place calls. Label it call (demo).",
+            "comfort",
+            CallPersonArgs,
+        ),
         _spec(
             "flash_lights",
             "Pulse the lights as an alert, then restore them. Use for a doorbell, knock, or alarm, "

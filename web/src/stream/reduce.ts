@@ -15,7 +15,9 @@ function mergeHome(home: HomeState, event: Extract<FluffyEvent, { type: "state" 
     lamp: { ...home.lamp, ...event.lamp },
     ceiling: { ...home.ceiling, ...event.ceiling },
     blinds: event.blinds ?? home.blinds,
+    door: { ...home.door, ...event.door },
     speaker: { ...home.speaker, ...event.speaker },
+    phone: { ...home.phone, ...event.phone },
     flash: { ...home.flash, ...event.flash },
     caption: event.caption === undefined ? home.caption : event.caption,
   };
@@ -39,6 +41,15 @@ export function reduce(snapshot: Snapshot, event: FluffyEvent): Snapshot {
       return {
         ...snapshot,
         senses: { ...snapshot.senses, chips: event.chips, thumb: event.thumb ?? snapshot.senses.thumb },
+      };
+    case "phone":
+      return {
+        ...snapshot,
+        senses: { ...snapshot.senses, hear: event.text },
+        home: {
+          ...snapshot.home,
+          phone: { mode: "reply", to: event.from ?? snapshot.home.phone.to, preview: event.text, delivered: true },
+        },
       };
     case "sense.hear": {
       const text = event.text?.trim() ?? "";

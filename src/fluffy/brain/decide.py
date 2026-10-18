@@ -163,6 +163,10 @@ def system_prompt(profile: Profile) -> str:
             "It's getting late and they want music: play_sound with sound=music and dim_lights "
             "in the same turn. Do not stop after the first part. "
             "A fall is the exception: alert_caregiver and nothing else.",
+            "- They ask to open or close the front or bedroom door: open_door or close_door.",
+            "- They ask for a song or to stop the music: play_music or stop_music.",
+            "- They ask you to text someone: send_text. The app always asks before it sends.",
+            "- They ask you to call someone: call_person. That is a demo animation, not a real call.",
             "- If you can see something may be wanted but you're unsure what, call ask_user "
             "with one short, friendly question instead of guessing or doing nothing.",
             "- Nothing above, or nothing changed: call no tools and reply with an empty message.",

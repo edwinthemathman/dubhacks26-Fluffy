@@ -22,6 +22,7 @@ from tests.inference.helpers import profiles
 EVENT_TYPES = {
     "state", "profile", "turn.start", "sense.see", "sense.hear", "think", "tool.call",
     "tool.status", "ask", "ask.answer", "say", "turn.end", "turn.raw", "safety", "fallback",
+    "phone",
 }
 
 CALM = SceneState(people=[PersonState(posture="sitting", location_surface="sofa", eyes="open")], summary="sitting")
@@ -506,6 +507,27 @@ def test_a_comfort_offer_asks_then_a_yes_changes_the_room():
         states = [e for e in events if e["type"] == "state" and "lamp" in e]
         assert states and states[-1]["lamp"]["luminosity"] == 20
         assert any(e["type"] == "tool.status" and e["status"] == "done" for e in events)
+    asyncio.run(run())
+
+
+def test_turn_end_carries_stage_timings():
+    async def run():
+        loop, fake, clock, events = make(profile="speech_cognitive")
+        fake.scene = DOZING
+        fake.device = [dim(20)]
+        feed_frames(loop, clock)
+        await settle(loop, rounds=4)
+        ends = [event for event in events if event["type"] == "turn.end"]
+        assert ends
+        timings = ends[-1]["timings"]
+        assert set(timings) == {
+            "frame_age_ms",
+            "scene_read_ms",
+            "decide_wait_ms",
+            "decide_ms",
+            "speech_to_tool_ms",
+        }
+
     asyncio.run(run())
 
 

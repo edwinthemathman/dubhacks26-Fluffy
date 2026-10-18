@@ -39,11 +39,14 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
   const [error, setError] = useState<string | null>(null);
   const parts = useRef<Parts>({});
   const generation = useRef(0);
+  const retry = useRef(0);
+  const reconnectTimer = useRef(0);
   const isSpeaking = useRef(options?.isSpeaking);
   isSpeaking.current = options?.isSpeaking;
 
   const stop = useCallback(() => {
     generation.current += 1;
+    window.clearTimeout(reconnectTimer.current);
     const socket = parts.current.socket;
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: "live.pause", paused: true }));
@@ -89,36 +92,39 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
       if (generation.current !== token) return;
 
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const socket = new WebSocket(`${protocol}://${window.location.host}/ws/live`);
-      socket.binaryType = "arraybuffer";
-      parts.current.socket = socket;
+      retry.current = 0;
 
-      let opened = false;
-      const fail = (message: string) => {
+      const connectSocket = () => {
         if (generation.current !== token) return;
-        generation.current += 1;
-        teardown(parts.current, videoRef.current);
-        setError(message);
-        setStatus("error");
+        const previous = parts.current.socket;
+        if (previous) {
+          previous.onopen = null;
+          previous.onerror = null;
+          previous.onclose = null;
+        }
+        const socket = new WebSocket(`${protocol}://${window.location.host}/ws/live`);
+        socket.binaryType = "arraybuffer";
+        parts.current.socket = socket;
+        socket.onopen = () => {
+          if (generation.current !== token || parts.current.socket !== socket) return;
+          retry.current = 0;
+          socket.send(JSON.stringify({ type: "live.pause", paused: false }));
+          setStatus("live");
+          setError(null);
+        };
+        socket.onerror = () => undefined;
+        socket.onclose = () => {
+          if (generation.current !== token || parts.current.socket !== socket) return;
+          const wait = Math.min(4000, 500 * 2 ** retry.current);
+          retry.current += 1;
+          setError("Reconnecting…");
+          reconnectTimer.current = window.setTimeout(connectSocket, wait);
+        };
       };
-      const drop = () => {
-        fail(
-          opened
-            ? "The Fluffy harness disconnected."
-            : "Can't reach the Fluffy harness. Is `uv run fluffy-live` running?",
-        );
-      };
-      socket.onopen = () => {
-        if (generation.current !== token) return;
-        opened = true;
-        socket.send(JSON.stringify({ type: "live.pause", paused: false }));
-        setStatus("live");
-      };
-      socket.onerror = drop;
-      socket.onclose = drop;
 
-      startFrames(stream, socket, token);
-      await startAudio(stream, socket, token);
+      connectSocket();
+      startFrames(stream, token);
+      await startAudio(stream, token);
     } catch (err) {
       if (generation.current !== token) return;
       const name = err instanceof DOMException ? err.name : "";
@@ -133,7 +139,7 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
       setStatus("error");
     }
 
-    function startFrames(stream: MediaStream, socket: WebSocket, token: number) {
+    function startFrames(stream: MediaStream, token: number) {
       const settings = stream.getVideoTracks()[0]?.getSettings() ?? {};
       const aspect = (settings.height ?? 720) / (settings.width ?? 1280);
       const frame = document.createElement("canvas");
@@ -150,7 +156,8 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
       parts.current.timer = window.setInterval(() => {
         const video = videoRef.current;
         if (busy || !video || !frameCtx || !smallCtx || video.readyState < 2) return;
-        if (socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > MAX_BUFFERED) return;
+        const liveSocket = parts.current.socket;
+        if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN || liveSocket.bufferedAmount > MAX_BUFFERED) return;
         const ts = Date.now();
         smallCtx.drawImage(video, 0, 0, small.width, small.height);
         const motion = motionScore(smallCtx.getImageData(0, 0, small.width, small.height).data);
@@ -161,15 +168,18 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
             busy = false;
             // toBlob can finish out of order. A late older frame would become "now".
             if (!blob || generation.current !== token || ts < lastSent) return;
-            if (socket.readyState !== WebSocket.OPEN) return;
+            const openSocket = parts.current.socket;
+            if (!openSocket || openSocket.readyState !== WebSocket.OPEN) return;
             lastSent = ts;
             void blob.arrayBuffer().then((jpeg) => {
               if (generation.current !== token || ts < lastSent) return;
+              const sender = parts.current.socket;
+              if (!sender || sender.readyState !== WebSocket.OPEN) return;
               const header = new DataView(new ArrayBuffer(13));
               header.setUint8(0, 1);
               header.setBigUint64(1, BigInt(ts), true);
               header.setFloat32(9, motion, true);
-              socket.send(join(header.buffer, jpeg));
+              sender.send(join(header.buffer, jpeg));
             });
           },
           "image/jpeg",
@@ -191,7 +201,7 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
       return total / gray.length / 255;
     }
 
-    async function startAudio(stream: MediaStream, socket: WebSocket, token: number) {
+    async function startAudio(stream: MediaStream, token: number) {
       if (stream.getAudioTracks().length === 0) return;
       const audio = parts.current.audio ?? new AudioContext();
       parts.current.audio = audio;
@@ -204,11 +214,12 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
       const source = audio.createMediaStreamSource(stream);
       const node = new AudioWorkletNode(audio, "pcm-chunker");
       node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-        if (generation.current !== token || socket.readyState !== WebSocket.OPEN) return;
+        const liveSocket = parts.current.socket;
+        if (generation.current !== token || !liveSocket || liveSocket.readyState !== WebSocket.OPEN) return;
         // Half-duplex only while our own line is playing. The browser's
         // speechSynthesis.speaking flag can stick on and mute the mic for good.
         if (isSpeaking.current?.()) return;
-        socket.send(join(new Uint8Array([2]).buffer, event.data));
+        liveSocket.send(join(new Uint8Array([2]).buffer, event.data));
       };
       source.connect(node);
       // The node must reach the destination to keep running; a muted gain keeps it silent.

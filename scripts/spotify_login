@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Save a Spotify refresh token with PKCE. No client secret.
+
+Needs SPOTIFY_CLIENT_ID in .env. The redirect is
+http://127.0.0.1:8888/callback unless SPOTIFY_REDIRECT_URI is set.
+The token is written to .spotify_token, which is gitignored.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import http.server
+import json
+import os
+import secrets
+import urllib.parse
+import webbrowser
+from pathlib import Path
+
+import httpx
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[1]
+TOKEN_PATH = ROOT / ".spotify_token"
+SCOPES = "user-modify-playback-state user-read-playback-state"
+
+
+def main() -> None:
+    load_dotenv(ROOT / ".env")
+    client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
+    redirect = os.environ.get("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback").strip()
+    if not client_id:
+        raise SystemExit("Set SPOTIFY_CLIENT_ID in .env")
+    parsed = urllib.parse.urlparse(redirect)
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(16)
+    query = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect,
+            "scope": SCOPES,
+            "code_challenge_method": "S256",
+            "code_challenge": challenge,
+            "state": state,
+        }
+    )
+    captured: dict[str, str] = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            incoming = urllib.parse.urlparse(self.path)
+            if incoming.path != parsed.path:
+                self.send_response(404)
+                self.end_headers()
+                return
+            params = urllib.parse.parse_qs(incoming.query)
+            captured["code"] = params.get("code", [""])[0]
+            captured["state"] = params.get("state", [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Spotify login captured. You can close this tab.")
+
+        def log_message(self, fmt: str, *args: object) -> None:
+            return
+
+    server = http.server.HTTPServer((parsed.hostname or "127.0.0.1", parsed.port or 8888), Handler)
+    webbrowser.open(f"https://accounts.spotify.com/authorize?{query}")
+    server.handle_request()
+    if captured.get("state") != state or not captured.get("code"):
+        raise SystemExit("Spotify login did not return a code")
+    response = httpx.post(
+        "https://accounts.spotify.com/api/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": captured["code"],
+            "redirect_uri": redirect,
+            "client_id": client_id,
+            "code_verifier": verifier,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    TOKEN_PATH.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"Wrote {TOKEN_PATH.name}")
+
+
+if __name__ == "__main__":
+    main()

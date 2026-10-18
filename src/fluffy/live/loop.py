@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
@@ -32,8 +33,8 @@ from fluffy.live.home import HomeState
 from fluffy.live.perceive import Decision, Read, Window
 from fluffy.live.presence import RoomPresence
 from fluffy.live.voice_policy import VoicePolicy
+from fluffy.integrations import run_tool
 from fluffy.models import Plan, Trigger
-from fluffy.notify.photon import notify_fall
 from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
 from fluffy.profile.model import Profile
 
@@ -161,6 +162,26 @@ class OpenTurn:
     call_ids: dict[str, str] = field(default_factory=dict)  # action_id -> call_id
 
 
+@dataclass
+class StageTimings:
+    """Milliseconds for one pass through the live lanes. None means that stage has not run."""
+
+    frame_age_ms: int | None = None
+    scene_read_ms: int | None = None
+    decide_wait_ms: int | None = None
+    decide_ms: int | None = None
+    speech_to_tool_ms: int | None = None
+
+    def as_dict(self) -> dict[str, int | None]:
+        return {
+            "frame_age_ms": self.frame_age_ms,
+            "scene_read_ms": self.scene_read_ms,
+            "decide_wait_ms": self.decide_wait_ms,
+            "decide_ms": self.decide_ms,
+            "speech_to_tool_ms": self.speech_to_tool_ms,
+        }
+
+
 class LiveLoop:
     def __init__(
         self,
@@ -212,6 +233,7 @@ class LiveLoop:
         self.says: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.timers: set[asyncio.Task] = set()
         self._help_text_sent = False
+        self.timings = StageTimings()
 
     # ---------- inputs ----------
 
@@ -290,6 +312,8 @@ class LiveLoop:
         self.presence = RoomPresence()
         self.room_change = ""
         self.pending = None
+        self._help_text_sent = False
+        self.timings = StageTimings()
         self.emit({"type": "safety", "state": "ok"})
 
     def hello(self) -> list[dict[str, Any]]:
@@ -397,7 +421,12 @@ class LiveLoop:
         window = self._window(self.s.watch_span_s, self.s.watch_frames)
         if window is None:
             return
+        latest = self.frames.latest
+        if latest is not None:
+            self.timings.frame_age_ms = max(0, int((self.now() - latest.at) * 1000))
+        started_read = time.perf_counter()
         read = await self.perceiver.read_scene(window, effort=self.s.watch_effort, profile=self.profile)
+        self.timings.scene_read_ms = int((time.perf_counter() - started_read) * 1000)
         if not self._live(epoch):
             return
         if read.error or read.value is None:
@@ -573,6 +602,7 @@ class LiveLoop:
         if not text:
             return
         self.speech_at = self.now()
+        self.timings.speech_to_tool_ms = None
         self.last_said = text
         self.emit({"type": "sense.hear", "text": text})
         if await self._answer_text(text, by="voice"):
@@ -690,6 +720,7 @@ class LiveLoop:
         epoch = self.epoch
         turn_id = self.ids("turn")
         started = self.now()
+        self.timings.decide_wait_ms = max(0, int((self.now() - request.at) * 1000))
         self.emit({"type": "turn.start", "turn_id": turn_id, "kind": request.kind, "trigger": request.trigger})
         for cue in sorted(request.cues):
             self.emit({"type": "think", "turn_id": turn_id, "note": f"cue: {_CUE_LABEL.get(cue, cue.replace('_', ' '))}"})
@@ -700,6 +731,7 @@ class LiveLoop:
             return
         self.emit({"type": "think", "turn_id": turn_id, "note": f"watching {window.seconds:.0f}s · {len(window.frames)} frames"})
         self._budget()
+        started_decide = time.perf_counter()
         result = await self.perceiver.decide(
             window,
             profile=self.profile,
@@ -712,6 +744,7 @@ class LiveLoop:
             room_change=request.room_change,
             habit_lines=self.habits.prompt_lines(applicable, self.profile),
         )
+        self.timings.decide_ms = int((time.perf_counter() - started_decide) * 1000)
         if not self._live(epoch):
             self._end(turn_id, started, "nothing", note="stopped")
             return
@@ -743,7 +776,6 @@ class LiveLoop:
             if wants_help:
                 why = reasons.get("alert_caregiver") or "looks like a fall"
                 self.emit({"type": "think", "turn_id": turn_id, "note": f"model: alert caregiver ({why})"[:48]})
-                self._text_help()
             if self.safety.phase in {"idle", "watching"} and wants_help:
                 self._safety_effects(self.safety.on_event("possible_fall"), trigger="model saw a fall")
                 self._end(turn_id, started, "asked", note="check-in started")
@@ -794,6 +826,8 @@ class LiveLoop:
     def _tool_call(self, turn: OpenTurn, action, why: str) -> str:
         call_id = self.ids("call")
         turn.call_ids[action.action_id] = call_id
+        if self.speech_at and self.timings.speech_to_tool_ms is None:
+            self.timings.speech_to_tool_ms = max(0, int((self.now() - self.speech_at) * 1000))
         self.emit(
             {
                 "type": "tool.call",
@@ -810,7 +844,15 @@ class LiveLoop:
     def _end(self, turn_id: str, started: float, outcome: str, note: str | None = None) -> None:
         if note:
             self.emit({"type": "think", "turn_id": turn_id, "note": note})
-        self.emit({"type": "turn.end", "turn_id": turn_id, "ms": int((self.now() - started) * 1000), "outcome": outcome})
+        self.emit(
+            {
+                "type": "turn.end",
+                "turn_id": turn_id,
+                "ms": int((self.now() - started) * 1000),
+                "outcome": outcome,
+                "timings": self.timings.as_dict(),
+            }
+        )
 
     # ---------- consent ----------
 
@@ -916,11 +958,21 @@ class LiveLoop:
         for action in plan.actions:
             call_id = turn.call_ids.get(action.action_id) or self._tool_call(turn, action, "")
             self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "approved"})
-            self._apply(action.tool, action.args, turn.turn_id)
-            self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "done"})
+            if action.tool == "alert_caregiver" and self._help_text_sent:
+                result = {"ok": True, "delivered": True, "to": "caregiver"}
+            else:
+                result = run_tool(action.tool, dict(action.args))
+                if action.tool == "alert_caregiver" and result.get("delivered"):
+                    self._help_text_sent = True
+            if result.get("ok", True):
+                self._apply(action.tool, action.args, turn.turn_id, result)
+                self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "done"})
+            else:
+                detail = str(result.get("error") or "didn't work")[:60]
+                self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "failed", "detail": detail})
 
-    def _apply(self, tool: str, args: dict[str, Any], turn_id: str | None) -> None:
-        state = self.home.apply(tool, args)
+    def _apply(self, tool: str, args: dict[str, Any], turn_id: str | None, result: dict[str, Any] | None = None) -> None:
+        state = self.home.apply(tool, args, result)
         if state is not None:
             self.emit(state)
         if tool == "flash_lights":
@@ -931,8 +983,6 @@ class LiveLoop:
             self._later(self.s.caption_s, lambda: self.home.state["caption"] == text and self.emit(self.home.clear_caption()))
         elif tool == "announce":
             self._say(turn_id, str(args.get("text", "")), voice=True)
-        elif tool == "alert_caregiver":
-            self._text_help()
 
     def _finish_flash(self, token: int) -> None:
         event = self.home.end_flash(token)
@@ -979,12 +1029,13 @@ class LiveLoop:
                 self.emit({"type": "safety", "state": "ok"})
                 self.safety_turn = None
 
-    def _text_help(self) -> None:
-        """One SMS per incident. The later safety alert does not text again."""
-        if self._help_text_sent:
-            return
-        if notify_fall():
-            self._help_text_sent = True
+    def on_photon_reply(self, sender: str, text: str) -> None:
+        """A caregiver texted back. Show it on the phone and as something heard."""
+        preview = text.strip()[:80]
+        self.home.state["phone"] = {"mode": "reply", "to": sender, "preview": preview, "delivered": True}
+        self.emit({"type": "state", "phone": dict(self.home.state["phone"])})
+        self.emit({"type": "phone", "from": sender, "text": text.strip()})
+        self.emit({"type": "sense.hear", "text": text.strip()})
 
     def _thumb(self) -> str | None:
         frame = self.frames.latest

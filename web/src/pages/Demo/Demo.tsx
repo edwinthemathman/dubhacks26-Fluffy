@@ -56,7 +56,9 @@ export function Demo() {
         <div className={styles.toolbar}>
           <h1 className="screen-title">Living room</h1>
           <ProfileBadge profile={snapshot.profile} />
-          <span className="pill quiet">{scene ? "Recorded run" : snapshot.link === "live" ? "Live" : "Harness offline"}</span>
+          <span className="pill quiet">
+            {scene ? "Recorded run" : snapshot.link === "live" ? "Live" : snapshot.link === "reconnecting" ? "Reconnecting…" : "Harness offline"}
+          </span>
           <div className="segment" role="group" aria-label="Profile">
             {PROFILES.map((profile) => (
               <button

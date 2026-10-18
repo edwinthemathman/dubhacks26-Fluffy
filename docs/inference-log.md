@@ -1,7 +1,7 @@
 # Inference work log
 
 Branch: `inference`, cut from `main` at `86cfce4` in `Fluffy-DubHacks-`.
-Nothing is committed yet.
+This slice is committed. The note below is the original log; the suite has grown past the first 45 tests.
 
 ## What was already in the repo
 
@@ -13,7 +13,7 @@ The git repo held the plan only: `01-execution.md`, `02-inference.md`, `03-demo.
 
 Part 2's deterministic core, tested offline with a frozen clock and a scripted Perceptron stand-in. The live API spike has not been run.
 
-`uv run pytest` — 45 passed.
+`uv run pytest` — 45 passed when this slice was first written. Later commits added the live loop, habits, and device tools, so that count is historical.
 
 ### Layout
 

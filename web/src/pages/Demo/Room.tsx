@@ -27,6 +27,13 @@ export function Room({ home }: { home: HomeState }) {
         <rect x="492" y="168" width="16" height="120" fill="#0c4dad" />
         <path d="M470 176h60l-8 28h-44z" fill={shade} stroke="#0c4dad" strokeWidth="3" />
         <rect x="430" y="250" width="46" height="36" rx="6" fill="white" stroke="#0c4dad" strokeWidth="3" />
+        {home.door.front_door === "open" ? (
+          <path d="M40 150 h70 v140 h-70" fill="none" stroke="#0c4dad" strokeWidth="4" />
+        ) : (
+          <rect x="40" y="150" width="70" height="140" fill="#d7e6f8" stroke="#0c4dad" strokeWidth="4" />
+        )}
+        <rect x="560" y="300" width="28" height="48" rx="4" fill="white" stroke="#0c4dad" strokeWidth="3" />
+        {home.phone.mode && <rect x="568" y="312" width="12" height="18" rx="2" fill="#1a6fe8" />}
         {home.speaker.sound && (
           <g className={styles.waves}>
             <rect x="438" y="258" width="5" height="18" fill="#1a6fe8" />
@@ -38,7 +45,9 @@ export function Room({ home }: { home: HomeState }) {
       <figcaption className={styles.meta}>
         <span>Lamp {home.lamp.luminosity}% · {home.lamp.warmth}</span>
         <span>Blinds {home.blinds}%</span>
-        <span>{home.speaker.sound ? home.speaker.sound : "Quiet"}</span>
+        <span>Door {home.door.front_door}</span>
+        <span>{home.speaker.track ?? (home.speaker.sound ? home.speaker.sound : "Quiet")}</span>
+        <span>{home.phone.mode ? `${home.phone.mode}${home.phone.to ? ` ${home.phone.to}` : ""}` : "Phone idle"}</span>
       </figcaption>
       {(home.caption || home.flash.active) && (
         <p className={styles.caption} role="status">

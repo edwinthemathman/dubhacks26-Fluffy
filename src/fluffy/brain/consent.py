@@ -96,7 +96,7 @@ class ConsentManager:
             return habit_update
 
         plan = _apply_spoken_consent(plan, profile, transcript_clear=transcript_clear)
-        if decision == "act" and plan.consent.given_by is None:
+        if decision == "act" and plan.consent.given_by is None and not _must_ask(plan):
             plan = _apply_cue(plan, self.clock)
         else:
             plan = _apply_preagreed(plan, profile)
@@ -279,8 +279,13 @@ def classify_yes_no(text: str) -> bool | None:
     return None
 
 
+def _must_ask(plan: Plan) -> bool:
+    """A text always waits for a yes, even on a clear spoken request or a cue."""
+    return any(action.tool == "send_text" for action in plan.actions)
+
+
 def _apply_spoken_consent(plan: Plan, profile: Profile, *, transcript_clear: bool) -> Plan:
-    if plan.action_class != "comfort" or plan.trigger.kind != "spoken":
+    if plan.action_class != "comfort" or plan.trigger.kind != "spoken" or _must_ask(plan):
         return plan
     if plan.consent.given_by is not None:
         return plan
@@ -355,6 +360,12 @@ _ACTION_ORDER = {
     "set_blinds": 2,
     "play_sound": 3,
     "stop_sound": 4,
+    "open_door": 8,
+    "close_door": 9,
+    "play_music": 10,
+    "stop_music": 11,
+    "send_text": 12,
+    "call_person": 13,
     "flash_lights": 5,
     "show_caption": 6,
     "announce": 7,
@@ -394,6 +405,19 @@ def _phrase_action(action, spoken: str = "") -> str | None:
         return "show a caption"
     if tool == "announce":
         return "say that out loud"
+    if tool == "open_door":
+        return "open the door"
+    if tool == "close_door":
+        return "close the door"
+    if tool == "play_music":
+        query = str(args.get("query") or "").strip()
+        return f"play {query}" if query else "play music"
+    if tool == "stop_music":
+        return "stop the music"
+    if tool == "send_text":
+        return "send that text"
+    if tool == "call_person":
+        return "call them"
     return None
 
 

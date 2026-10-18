@@ -15,7 +15,9 @@ def initial_home() -> dict[str, Any]:
         "lamp": {"luminosity": 78, "warmth": "warm"},
         "ceiling": {"luminosity": 36},
         "blinds": 55,
-        "speaker": {"sound": None, "volume": 0},
+        "door": {"front_door": "closed", "bedroom_door": "closed"},
+        "speaker": {"sound": None, "volume": 0, "track": None},
+        "phone": {"mode": None, "to": None, "preview": None, "delivered": False},
         "flash": {"active": False, "color": None, "pattern": None},
         "caption": None,
     }
@@ -31,9 +33,10 @@ class HomeState:
         self.state = initial_home()
         return {"type": "state", **copy.deepcopy(self.state)}
 
-    def apply(self, tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    def apply(self, tool: str, args: dict[str, Any], result: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Apply one tool call. Returns a `state` event, or None if nothing in the room changes."""
         s = self.state
+        result = result or {}
         if tool == "dim_lights":
             level = int(args.get("luminosity", 50))
             light = args.get("light")
@@ -49,11 +52,47 @@ class HomeState:
             s["blinds"] = int(args.get("position", 50))
             return {"type": "state", "blinds": s["blinds"]}
         if tool == "play_sound":
-            s["speaker"] = {"sound": args.get("sound"), "volume": int(args.get("volume", 40))}
+            s["speaker"] = {"sound": args.get("sound"), "volume": int(args.get("volume", 40)), "track": None}
             return {"type": "state", "speaker": dict(s["speaker"])}
         if tool == "stop_sound":
-            s["speaker"] = {"sound": None, "volume": 0}
+            s["speaker"] = {"sound": None, "volume": 0, "track": None}
             return {"type": "state", "speaker": dict(s["speaker"])}
+        if tool in {"open_door", "close_door"}:
+            door = str(args.get("door") or "front_door")
+            if door not in s["door"]:
+                return None
+            s["door"][door] = "open" if tool == "open_door" else "closed"
+            return {"type": "state", "door": dict(s["door"])}
+        if tool == "play_music":
+            label = None
+            if result.get("track"):
+                artist = result.get("artist") or ""
+                label = f"{result['track']} — {artist}".strip(" —")
+            s["speaker"] = {
+                "sound": "music",
+                "volume": int(args.get("volume", s["speaker"].get("volume") or 40)),
+                "track": label,
+            }
+            return {"type": "state", "speaker": dict(s["speaker"])}
+        if tool == "stop_music":
+            s["speaker"] = {"sound": None, "volume": 0, "track": None}
+            return {"type": "state", "speaker": dict(s["speaker"])}
+        if tool in {"send_text", "alert_caregiver"}:
+            s["phone"] = {
+                "mode": "text",
+                "to": result.get("to") or args.get("to") or "caregiver",
+                "preview": str(args.get("message") or "")[:80] or None,
+                "delivered": bool(result.get("delivered")),
+            }
+            return {"type": "state", "phone": dict(s["phone"])}
+        if tool == "call_person":
+            s["phone"] = {
+                "mode": "call (demo)",
+                "to": result.get("to") or args.get("to"),
+                "preview": None,
+                "delivered": False,
+            }
+            return {"type": "state", "phone": dict(s["phone"])}
         if tool == "flash_lights":
             self.flash_token += 1
             s["flash"] = {"active": True, "color": args.get("color"), "pattern": args.get("pattern")}

@@ -1,8 +1,9 @@
-"""Send the fall text through Photon SMS.
+"""Send texts through Photon 2.0.
 
 A project key cannot text by itself. Photon needs the project id, the number
-Photon sends from, a user for the caregiver, a space that holds both, then
-the message. The space id is kept for the process so a later fall reuses it.
+Photon sends from, a user for each phone, a space that holds both, then the
+message. Spaces are kept per recipient so a later text to the same person
+reuses the space. Numbers and handles live in the environment, never here.
 """
 
 from __future__ import annotations
@@ -17,8 +18,7 @@ import httpx
 log = logging.getLogger("fluffy.notify.photon")
 
 API_BASE = "https://api.photon.codes"
-ALERT_TO = "+14252686992"
-ALERT_TEXT = "Edwin needs help! He fell down."
+DEFAULT_HELP = "Someone needs help in the living room."
 
 _shared: PhotonSms | None = None
 _logged_skip = False
@@ -43,7 +43,7 @@ class PhotonSms:
         self.project_id = project_id.strip()
         self.from_number = from_number.strip()
         self._client = client or httpx.Client()
-        self._space_id: str | None = None
+        self._spaces: dict[str, str] = {}
 
     @property
     def configured(self) -> bool:
@@ -57,17 +57,17 @@ class PhotonSms:
             os.environ.get("PHOTON_FROM", ""),
         )
 
-    def send(self) -> None:
-        """Text the caregiver. Raises PhotonError when Photon refuses the send."""
+    def send_text(self, to: str, text: str) -> None:
+        """Text `to`. Raises PhotonError when Photon refuses the send."""
         sender = self._user(self.from_number)
-        recipient = self._user(ALERT_TO)
-        space = self._space(sender, recipient)
+        recipient = self._user(to)
+        space = self._space(sender, recipient, to)
         self._post(
             "messages",
             {
                 "senderId": sender,
                 "spaceId": space,
-                "content": {"type": "text", "format": "plain", "text": ALERT_TEXT},
+                "content": {"type": "text", "format": "plain", "text": text},
             },
             idempotent=True,
         )
@@ -76,16 +76,17 @@ class PhotonSms:
         body = self._post("users", {"platform": "sms", "handle": handle})
         return str(body["id"])
 
-    def _space(self, sender: str, recipient: str) -> str:
-        if self._space_id:
-            return self._space_id
+    def _space(self, sender: str, recipient: str, handle: str) -> str:
+        cached = self._spaces.get(handle)
+        if cached:
+            return cached
         body = self._post(
             "spaces",
             {"platform": "sms", "participantIds": [sender, recipient]},
             idempotent=True,
         )
-        self._space_id = str(body["id"])
-        return self._space_id
+        self._spaces[handle] = str(body["id"])
+        return self._spaces[handle]
 
     def _post(self, path: str, body: dict[str, Any], *, idempotent: bool = False) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -118,17 +119,24 @@ def plan_alerts(plan: Any) -> bool:
     return any(action.tool == "alert_caregiver" for action in plan.actions)
 
 
-def notify_fall(sms: PhotonSms | None = None) -> bool:
-    """Send the fixed help text. Missing setup or a Photon error does not raise."""
+def notify_fall(
+    message: str | None = None,
+    sms: PhotonSms | None = None,
+    to: str | None = None,
+) -> bool:
+    """Text the caregiver. Missing setup or a Photon error does not raise."""
     global _logged_skip
     sender = sms or shared_sms()
-    if not sender.configured:
+    handle = (to or os.environ.get("PHOTON_CAREGIVER_HANDLE") or "").strip()
+    if not sender.configured or not handle:
         if not _logged_skip:
-            log.info("photon sms skipped: set PHOTON_API_KEY, PHOTON_PROJECT_ID, and PHOTON_FROM")
+            log.info(
+                "photon sms skipped: set PHOTON_API_KEY, PHOTON_PROJECT_ID, PHOTON_FROM, and PHOTON_CAREGIVER_HANDLE"
+            )
             _logged_skip = True
         return False
     try:
-        sender.send()
+        sender.send_text(handle, message or DEFAULT_HELP)
     except Exception as exc:
         log.warning("photon sms failed: %s", exc)
         return False
@@ -139,4 +147,9 @@ def notify_plan(plan: Any, sms: PhotonSms | None = None) -> bool:
     """Text only when this plan is the caregiver alert."""
     if not plan_alerts(plan):
         return False
-    return notify_fall(sms)
+    message = None
+    for action in plan.actions:
+        if action.tool == "alert_caregiver":
+            message = action.args.get("message")
+            break
+    return notify_fall(message if isinstance(message, str) else None, sms)

@@ -48,6 +48,43 @@ uv run python scripts/live_spike.py --watch --decide   # terminal-only live test
 - **Safety:** a fall or a call for help starts the check-in right away. A model call to `alert_caregiver` also goes through the check-in instead of a second question.
 - **Output:** every step is sent on `/ws/ui` as the web app's existing events, so the Demo and Mind pages show it live.
 
+## Stage timings
+`turn.end` and `GET /api/health` now carry `frame_age_ms`, `scene_read_ms`, `decide_wait_ms`, `decide_ms`, and `speech_to_tool_ms`. No camera session was run for this pass, so the knobs stay where they are: `watch_frames` is still 8, the heartbeat is unchanged, and audio still rides on every audible scene read.
+
+| Stage | Measured |
+|---|---|
+| Frame age at read | not run |
+| Scene read | not run |
+| Decide queue wait | not run |
+| Decide | not run |
+| End of speech to tool.call | not run |
+
+## Accuracy checklist
+These need a person, a mat, and the live camera. None were run in this pass.
+
+| Check | Result |
+|---|---|
+| Real fall on a mat | not run |
+| Calm walk-out does not ask about a fall | not run |
+| Dozing on the sofa | not run |
+| Shielding eyes, lamp at 30% | not run |
+| Shielding eyes, lamp at 80% | not run |
+| Doorbell | not run |
+| Spoken request | not run |
+
+## Habit checklist
+The habit code is already on this branch. These were not physically verified.
+
+| Check | Result |
+|---|---|
+| Walk out at least 6 s shows Mind "left" and lights off, with no question | not run |
+| Walk in shows "walked in" and lights on at 80% within about 2 s | not run |
+| Dozing dims to 20 and warm | not run |
+| Lamp at 30% with glare does nothing | not run |
+| A second glare within 10 minutes does nothing | not run |
+
+Speech recognition now keeps the latest send and speaking callbacks in refs, so a render does not restart Chrome's recognizer. `/ws/live` reconnects with the same capped backoff as `/ws/ui` and leaves the camera up. The banner says "Reconnecting…" while that retry is in progress.
+
 ## Still open
 - Nod answers (answer mode) aren't wired yet. Answers come from buttons, typing or voice.
 - No real fall has been tested on a live camera yet. Try it on the Demo page with a mat.
