@@ -128,9 +128,11 @@ class Instincts:
         on_phone = person is not None and person.on_phone == "yes"
         paused = len(people) >= 2 or on_phone or (person is not None and person.speaking == "yes")
 
-        if counts.get("clutch_throat", 0) >= 1:
+        expression = person.expression if person is not None else "unclear"
+        hurt = expression in {"pain", "panic"}
+        if counts.get("clutch_throat", 0) >= 1 and hurt:
             return _safety("choking", counts, "possible choking")
-        if counts.get("hold_chest", 0) >= 1:
+        if counts.get("hold_chest", 0) >= 1 and hurt:
             return _safety("chest", counts, "hand on chest")
 
         gesture = person.gesture if person is not None else "none"
@@ -200,16 +202,16 @@ class Instincts:
         )
         squint = counts.get("hold_text_far_or_squint", 0) >= 2
         on_head_pat = counts.get("touch_head_top", 0) and counts.get("look_at_surfaces", 0)
-        if not ((face and companions) or squint or on_head_pat):
-            return None
-        if person.wearing_glasses != "no":
+        if person.expression == "confused":
+            companions = companions or 1
+        if not ((face and companions) or squint or on_head_pat or (counts.get("pat_chest_pocket", 0) >= 2 and person.expression == "confused")):
             return None
         spot = _spot(scene, memory, now, "glasses")
         if spot is not None and spot.on_head:
-            text = "I think your glasses might be on top of your head."
+            text = "I think your glasses are on top of your head."
             return _object("tell", "glasses", text, counts, person)
         if on_head_pat and spot is None:
-            text = "I think your glasses might be on top of your head."
+            text = "I think your glasses are on top of your head."
             return _object("tell", "glasses", text, counts, person)
         return self._located("glasses", spot, counts, person, memory, now, scene)
 
@@ -217,14 +219,17 @@ class Instincts:
         if self._quiet("water", now):
             return None
         coughs = counts.get("cough", 0) + (1 if "cough" in sounds else 0)
-        throat = counts.get("touch_throat", 0)
-        if not ((throat and coughs) or coughs >= 2):
+        if "throat_clear" in sounds:
+            coughs += 1
+        throat = counts.get("rub_throat", 0) + counts.get("touch_throat", 0)
+        thirsty = coughs or person.expression == "discomfort" or "throat_clear" in sounds
+        if not ((throat and thirsty) or coughs >= 2):
             return None
         if _holding_drink(person):
             return None
         spot = _drink_spot(scene, memory, now)
         if spot is None or spot.with_person:
-            text = "Would you like some water?"
+            text = "Would you like some water? I can't see your water bottle from here."
             return Guess(
                 "ask",
                 "water",
@@ -320,10 +325,13 @@ class Instincts:
         said = name.lower() in (scene.said or "").lower()
         score = _score(spot, said=said, weights=self.weights)
         text = _sentence(name, spot, now, person.facing, self.anchors)
-        chain = _chain(counts, need, text)
+        chain = _chain(counts, need, text, _found(spot))
         if spot is not None and score >= 0.6:
             return Guess("tell", need, text, (), chain)
-        question = f"Are you looking for your {name}?"
+        if spot is None and need == "glasses":
+            question = "Are you looking for your glasses? I can't see them from here."
+        else:
+            question = f"Are you looking for your {name}?"
         return Guess(
             "ask",
             need,
@@ -359,8 +367,10 @@ def place_phrase(
         whose = "left" if side == "left" else "right"
         return f"on your {whose} side of the {bare}"
     end = "left side" if side == "left" else "right side"
-    anchor = left_anchor if side == "left" else right_anchor
-    return f"on the {end} of the {bare}, near {anchor}"
+    if facing == "unclear":
+        anchor = left_anchor if side == "left" else right_anchor
+        return f"on the {end} of the {bare}, near {anchor}"
+    return f"on the {end} of the {bare}"
 
 
 def speakable(text: str) -> str:
@@ -402,14 +412,22 @@ def _choice_labels(names: list[str]) -> tuple[str, ...]:
     return tuple([*(f"Your {name}" for name in names), "Something else", "I'm fine"])
 
 
-def _chain(counts: dict[str, int], pattern: str, said: str) -> str:
+def _chain(counts: dict[str, int], pattern: str, said: str, found: str = "") -> str:
     if counts:
         seen = ", ".join(
             f"{label} ×{count}" if count > 1 else label for label, count in counts.items() if count
         )
     else:
         seen = "gesture"
-    return f"saw: {seen} → pattern: {pattern} → said: {said}"
+    where = found or "none"
+    return f"saw: {seen} → pattern: {pattern} → found: {where} → said: {said}"
+
+
+def _found(spot: "_Spot | None") -> str:
+    if spot is None:
+        return "none"
+    side = spot.side if spot.side not in {"", "unclear"} else "middle"
+    return f"{spot.location}, {side}"
 
 
 def _score(spot: "_Spot | None", *, said: bool, weights: dict[str, float]) -> float:
