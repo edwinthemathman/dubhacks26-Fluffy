@@ -5,7 +5,7 @@ Usage (from the repo root):
   uv run python scripts/live_spike.py --video my.mp4  # timings on your own clip
   uv run python scripts/live_spike.py --webcam        # timings on 8 s grabbed from the webcam
   uv run python scripts/live_spike.py --watch         # print a live read every few seconds (stage a fall, etc.)
-  add --write to save the timing table to docs/live-spike.md
+  add --write to save the timing table to docs/live-spike-runs.md
 
 It answers:
   1. latency and prompt tokens of a scene read vs number of frames and reasoning effort
@@ -309,7 +309,7 @@ async def main() -> None:
         rows = await measure(client, frames, args)
 
     if args.write:
-        out = ROOT / "docs" / "live-spike.md"
+        out = ROOT / "docs" / "live-spike-runs.md"
         header = [
             "# Live spike results",
             "",

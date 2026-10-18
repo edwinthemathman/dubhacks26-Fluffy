@@ -2,7 +2,8 @@
 
 Lanes (at most one call in flight each):
   watch   motion then settle, a long stretch of motion, or a heartbeat -> scene read
-  hear    the end of a burst of sound -> sound read (or a yes/no read while a question is open)
+  hear    the end of a burst of sound -> sound read (or a yes/no read while a question is open);
+          a burst that lands while a read is in flight waits, and a newer one replaces it
   decide  a new cue or speech -> decision call with tools; a newer trigger replaces a queued
           one and results for a trigger older than `stale_s` are dropped
   safety  a fall or a call for help starts the check-in at once, without waiting on the model
@@ -166,10 +167,12 @@ class LiveLoop:
         self.last_motion: float | None = None
         self.last_watch = 0.0
         self.pending: DecideRequest | None = None
+        self.pending_hear: tuple[int, int] | None = None
         self.tasks: dict[str, asyncio.Task | None] = {"watch": None, "hear": None, "decide": None}
         self.open_turn: OpenTurn | None = None
         self.safety_turn: str | None = None
         self.paused = False
+        self.epoch = 0
         self.mute_until = 0.0
         self.says: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.timers: set[asyncio.Task] = set()
@@ -194,8 +197,12 @@ class LiveLoop:
             return
         rms = self.audio.add(pcm)
         burst = self.gate.feed(rms, self.audio.end, len(pcm) // 2)
-        if burst and self._idle("hear"):
+        if not burst:
+            return
+        if self._idle("hear"):
             self._start("hear", self._hear(*burst))
+        else:
+            self.pending_hear = burst
 
     async def on_client(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -225,6 +232,12 @@ class LiveLoop:
             self.mute_until = self.now() + 0.3
 
     def reset(self) -> None:
+        self.epoch += 1
+        for task in list(self.timers):
+            task.cancel()
+        self.timers.clear()
+        self.pending = None
+        self.pending_hear = None
         self.emit(self.home.reset())
         self.consent.open = None
         self.safety = SafetyMachine(self.clock, self.profile)
@@ -283,7 +296,28 @@ class LiveLoop:
         return task is None or task.done()
 
     def _start(self, lane: str, coro) -> None:
-        self.tasks[lane] = asyncio.create_task(coro)
+        async def guard() -> None:
+            try:
+                await coro
+            except Exception:
+                log.exception("%s lane failed", lane)
+
+        self.tasks[lane] = asyncio.create_task(guard())
+
+    def _live(self, epoch: int) -> bool:
+        """False once the room was reset or the browser stopped streaming."""
+        return epoch == self.epoch and not self.paused
+
+    def on_feed_closed(self) -> None:
+        """The last camera socket closed. Don't keep reading the last frame."""
+        self.paused = True
+        self.frames.clear()
+        self.audio.clear()
+        self.gate = SpeechGate()
+        self.motion_started = None
+        self.last_motion = None
+        self.pending = None
+        self.pending_hear = None
 
     def _budget(self) -> bool:
         now = self.now()
@@ -303,16 +337,21 @@ class LiveLoop:
         frames = self.frames.window(span, count)
         if len(frames) < 2:
             return None
-        if wav is None:
+        # A quiet mic still fills the buffer. Attaching it would make every scene
+        # read wait on a transcript, and the picture would invent sound labels.
+        if wav is None and self.audio.loudest(span) >= self.gate.threshold:
             pcm = self.audio.last(span)
             wav = to_wav(pcm) if len(pcm) >= self.audio.rate else None  # at least 0.5 s
         return Window(frames=frames, wav=wav, seconds=self.frames.span_of(frames), ended_at=self.now())
 
     async def _watch(self) -> None:
+        epoch = self.epoch
         window = self._window(self.s.watch_span_s, self.s.watch_frames)
         if window is None:
             return
         read = await self.perceiver.read_scene(window, effort=self.s.watch_effort, profile=self.profile)
+        if not self._live(epoch):
+            return
         if read.error or read.value is None:
             log.warning("scene read failed: %s", read.error)
             return
@@ -351,10 +390,22 @@ class LiveLoop:
     # ---------- hear lane ----------
 
     async def _hear(self, start: int, end: int) -> None:
+        epoch = self.epoch
+        while self._live(epoch):
+            await self._hear_span(start, end, epoch)
+            nxt = self.pending_hear
+            self.pending_hear = None
+            if nxt is None or not self._live(epoch):
+                return
+            start, end = nxt
+
+    async def _hear_span(self, start: int, end: int, epoch: int) -> None:
         wav = to_wav(self.audio.between(start, end))
         question = self._open_question()
         if question:
             read = await self.perceiver.answer(wav, question)
+            if not self._live(epoch):
+                return
             choice = read.value if isinstance(read.value, str) else "unclear"
             if choice in {"yes", "no", "help"}:
                 self.emit({"type": "sense.hear", "text": f"answer: {choice}"})
@@ -363,12 +414,16 @@ class LiveLoop:
             if choice == "other":
                 self.emit({"type": "sense.hear", "text": "answer: other"})
                 spoken = await self.perceiver.transcript(wav, self.profile)
+                if not self._live(epoch):
+                    return
                 text = spoken.value.transcript.strip() if isinstance(spoken.value, TranscriptRead) else ""
                 if text:
                     question = self._replace_open_question(by="voice", said=text)
                     self._follow_up(text, question, wav)
                 return
         read = await self.perceiver.read_sound(wav)
+        if not self._live(epoch):
+            return
         if read.error or read.value is None:
             log.warning("sound read failed: %s", read.error)
             return
@@ -499,6 +554,7 @@ class LiveLoop:
     # ---------- decide lane ----------
 
     async def _decide(self, request: DecideRequest) -> None:
+        epoch = self.epoch
         turn_id = self.ids("turn")
         started = self.now()
         self.emit({"type": "turn.start", "turn_id": turn_id, "kind": request.kind, "trigger": request.trigger})
@@ -520,6 +576,9 @@ class LiveLoop:
             asked=request.asked,
             answer=request.answer,
         )
+        if not self._live(epoch):
+            self._end(turn_id, started, "nothing", note="stopped")
+            return
         if self.now() - request.at > self.s.stale_s:
             self._end(turn_id, started, "nothing", note="too late, dropped")
             return
@@ -706,17 +765,26 @@ class LiveLoop:
         if state is not None:
             self.emit(state)
         if tool == "flash_lights":
-            self._later(float(args.get("duration_s", 3)), lambda: self.emit(self.home.end_flash()))
+            token = self.home.flash_token
+            self._later(float(args.get("duration_s", 3)), lambda token=token: self._finish_flash(token))
         elif tool == "show_caption":
             text = args.get("text")
             self._later(self.s.caption_s, lambda: self.home.state["caption"] == text and self.emit(self.home.clear_caption()))
         elif tool == "announce":
             self._say(turn_id, str(args.get("text", "")), voice=True)
 
+    def _finish_flash(self, token: int) -> None:
+        event = self.home.end_flash(token)
+        if event is not None:
+            self.emit(event)
+
     def _later(self, seconds: float, fn: Callable[[], Any]) -> None:
+        epoch = self.epoch
+
         async def run() -> None:
             await asyncio.sleep(seconds)
-            fn()
+            if epoch == self.epoch:
+                fn()
 
         try:
             task = asyncio.get_running_loop().create_task(run())

@@ -23,6 +23,9 @@ class Frame:
 class FrameBuffer:
     def __init__(self, keep_s: float = 12.0) -> None:
         self.keep_ms = int(keep_s * 1000)
+        # Above the 4 fps feed, so a faster sender still covers `keep_s`. A clock
+        # step that stalls timestamps would otherwise keep every frame forever.
+        self.max_frames = int(keep_s * 8) + 16
         self.frames: deque[Frame] = deque()
 
     def add(self, ts_ms: int, jpeg: bytes, motion: float, at: float) -> None:
@@ -30,6 +33,8 @@ class FrameBuffer:
             ts_ms = self.frames[-1].ts_ms  # Perceptron needs timestamps that never decrease
         self.frames.append(Frame(ts_ms, jpeg, motion, at))
         while self.frames and self.frames[0].ts_ms < ts_ms - self.keep_ms:
+            self.frames.popleft()
+        while len(self.frames) > self.max_frames:
             self.frames.popleft()
 
     def clear(self) -> None:

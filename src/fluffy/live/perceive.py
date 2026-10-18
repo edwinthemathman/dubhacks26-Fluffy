@@ -191,10 +191,31 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+# These match as whole words. "fall" must not hit "falling asleep", and "help"
+# must not hit "helpful". Longer stems ("groan", "knock") still match their endings.
+_WHOLE_WORD = {"fall", "falls", "fell", "help", "cry", "said"}
+
+
+def _mentioned(text: str, word: str) -> bool:
+    if word not in _WHOLE_WORD:
+        return word in text
+    start = 0
+    while True:
+        found = text.find(word, start)
+        if found < 0:
+            return False
+        before = text[found - 1] if found else " "
+        after_at = found + len(word)
+        after = text[after_at] if after_at < len(text) else " "
+        if not before.isalnum() and not after.isalnum():
+            return True
+        start = found + 1
+
+
 def labels_from_text(text: str) -> list[str]:
     """Sound labels named in a one-line description, in priority order."""
     lowered = f" {text.lower()} "
-    found = [label for label, words in _KEYWORDS if any(word in lowered for word in words)]
+    found = [label for label, words in _KEYWORDS if any(_mentioned(lowered, word) for word in words)]
     if "help" in found and "help me find" in lowered:
         found.remove("help")
     if "doorbell" in found and "door" in found:

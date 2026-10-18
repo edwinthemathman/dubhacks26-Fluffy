@@ -24,8 +24,10 @@ def initial_home() -> dict[str, Any]:
 class HomeState:
     def __init__(self) -> None:
         self.state = initial_home()
+        self.flash_token = 0
 
     def reset(self) -> dict[str, Any]:
+        self.flash_token += 1
         self.state = initial_home()
         return {"type": "state", **copy.deepcopy(self.state)}
 
@@ -53,6 +55,7 @@ class HomeState:
             s["speaker"] = {"sound": None, "volume": 0}
             return {"type": "state", "speaker": dict(s["speaker"])}
         if tool == "flash_lights":
+            self.flash_token += 1
             s["flash"] = {"active": True, "color": args.get("color"), "pattern": args.get("pattern")}
             return {"type": "state", "flash": dict(s["flash"])}
         if tool == "show_caption":
@@ -60,7 +63,10 @@ class HomeState:
             return {"type": "state", "caption": s["caption"]}
         return None
 
-    def end_flash(self) -> dict[str, Any]:
+    def end_flash(self, token: int) -> dict[str, Any] | None:
+        """Turn the flash off only if `token` is still the one that turned it on."""
+        if token != self.flash_token:
+            return None
         self.state["flash"] = {"active": False, "color": None, "pattern": None}
         return {"type": "state", "flash": dict(self.state["flash"])}
 

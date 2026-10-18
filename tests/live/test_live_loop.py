@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from fluffy.clock import FrozenClock
 from fluffy.live.buffers import AudioBuffer, FrameBuffer, SpeechGate, to_wav
+from fluffy.live.home import HomeState
 from fluffy.live.loop import LiveLoop, LiveSettings
 from fluffy.live.perceive import Decision, Read
 from fluffy.live.server import FRAME_HEADER, create_app, handle_binary
@@ -45,14 +46,18 @@ class FakePerceiver:
         self.choices: list[str] | None = None
         self.device: list[str] = []
         self.scene_calls = 0
+        self.sound_calls = 0
+        self.windows: list = []
         self.decide_calls: list[dict] = []
         self.decide_gate: asyncio.Event | None = None
 
     async def read_scene(self, window, *, effort, profile=None):
         self.scene_calls += 1
+        self.windows.append(window)
         return Read(value=self.scene, ms=900)
 
     async def read_sound(self, wav):
+        self.sound_calls += 1
         return Read(value=self.sound, ms=300)
 
     async def answer(self, wav, question):
@@ -110,6 +115,26 @@ def types(events: list[dict]) -> list[str]:
 
 
 # ---------- buffers ----------
+
+def test_frame_buffer_stays_bounded_when_timestamps_stall():
+    buf = FrameBuffer()
+    for i in range(500):
+        buf.add(1000, bytes([i % 256]), 0.0, at=float(i))
+    assert len(buf.frames) == buf.max_frames
+    assert buf.frames[-1].jpeg == bytes([499 % 256])
+
+
+def test_an_older_flash_does_not_turn_off_a_newer_one():
+    home = HomeState()
+    home.apply("flash_lights", {"color": "amber", "pattern": "pulse1"})
+    first = home.flash_token
+    home.apply("flash_lights", {"color": "blue", "pattern": "strobe"})
+    assert home.end_flash(first) is None
+    assert home.state["flash"]["active"] is True
+    assert home.state["flash"]["color"] == "blue"
+    done = home.end_flash(home.flash_token)
+    assert done is not None and done["flash"]["active"] is False
+
 
 def test_frame_window_is_evenly_spread_and_starts_at_zero():
     buf = FrameBuffer()
@@ -193,8 +218,21 @@ def test_a_sound_label_from_a_silent_window_is_ignored():
         loop.on_audio(struct.pack("<8000h", *([0] * 8000)))  # half a second of silence
         await settle(loop)
         assert loop.scene is not None and loop.scene.sounds == ["none"]
+        assert fake.windows and fake.windows[-1].wav is None
         assert not any(e["type"] == "safety" for e in events)
         assert fake.decide_calls == []
+    asyncio.run(run())
+
+
+def test_a_loud_window_keeps_its_audio():
+    async def run():
+        loop, fake, clock, _ = make(heartbeat_s=999)
+        loop.last_watch = clock.now().timestamp()
+        feed_frames(loop, clock, 1.0, motion=0.2)
+        loop.on_audio(struct.pack("<8000h", *([8000] * 8000)))
+        clock.advance(0.6)
+        await settle(loop)
+        assert fake.windows and fake.windows[-1].wav is not None
     asyncio.run(run())
 
 
@@ -236,6 +274,58 @@ def test_a_newer_trigger_replaces_a_queued_one_and_stale_ones_drop():
         clock.advance(11)
         await settle(loop)
         assert "old" not in [c["utterance"] for c in fake.decide_calls]
+    asyncio.run(run())
+
+
+def test_reset_discards_a_decision_still_in_flight():
+    async def run():
+        loop, fake, clock, events = make()
+        fake.device = [dim(20)]
+        fake.decide_gate = asyncio.Event()
+        feed_frames(loop, clock)
+        loop.last_watch = clock.now().timestamp() + 999
+        await loop.on_client({"type": "typed", "text": "dim the lamp"})
+        await settle(loop)
+        assert len(fake.decide_calls) == 1
+        await loop.on_client({"type": "room.reset"})
+        fake.decide_gate.set()
+        await settle(loop)
+        assert loop.consent.open is None
+        assert loop.home.state["lamp"]["luminosity"] == 78
+        assert any(event["type"] == "think" and event["note"] == "stopped" for event in events)
+        assert not any(event["type"] == "tool.status" and event["status"] == "done" for event in events)
+    asyncio.run(run())
+
+
+def _loud_then_quiet(loop: LiveLoop) -> None:
+    loud = struct.pack("<1600h", *([4000] * 1600))
+    quiet = struct.pack("<1600h", *([0] * 1600))
+    for _ in range(4):
+        loop.on_audio(loud)
+    for _ in range(8):
+        loop.on_audio(quiet)
+
+
+def test_a_burst_during_a_sound_read_is_not_dropped():
+    async def run():
+        loop, fake, _, _ = make()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow(_wav):
+            fake.sound_calls += 1
+            started.set()
+            await release.wait()
+            return Read(value=fake.sound, ms=300)
+
+        fake.read_sound = slow
+        _loud_then_quiet(loop)
+        await started.wait()
+        _loud_then_quiet(loop)
+        assert fake.sound_calls == 1
+        release.set()
+        await settle(loop)
+        assert fake.sound_calls == 2
     asyncio.run(run())
 
 
@@ -317,3 +407,6 @@ def test_sound_labels_fall_back_to_the_description():
     assert labels_from_text("a loud thud, then someone groans") == ["pain", "impact"]
     assert labels_from_text("someone says help me find my keys") == ["speech"]
     assert labels_from_text("quiet room tone") == []
+    assert labels_from_text("they are falling asleep") == []
+    assert labels_from_text("that was helpful") == []
+    assert labels_from_text("he fell") == ["impact"]
