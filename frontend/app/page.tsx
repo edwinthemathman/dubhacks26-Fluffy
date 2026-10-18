@@ -11,7 +11,7 @@ import PlanBody, { Noticed } from "@/components/PlanBody";
 import ThinkingLabel from "@/components/ThinkingLabel";
 import { useTypewriter } from "@/lib/useTypewriter";
 import { EXAMPLE_CUES } from "@/lib/scenes";
-import { dedupeTurns } from "@/lib/fluffy/reducer";
+import { activityTurn, dedupeTurns } from "@/lib/fluffy/reducer";
 import { useSession } from "@/providers/FluffySessionProvider";
 
 type View = "intent" | "actions" | "evidence";
@@ -27,13 +27,15 @@ export default function Home() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [view, setView] = useState<View>("intent");
   const [pinned, setPinned] = useState(false);
-  const turns = dedupeTurns(session.state).turns;
+  const sessionState = dedupeTurns(session.state);
+  const turns = sessionState.turns;
   const submitted = turns.length > 0;
-  const latest = turns[turns.length - 1];
+  const latest = activityTurn(sessionState);
+  const earlier = turns.filter((turn) => turn.id !== latest?.id);
   const plan = latest?.planId ? session.state.plans[latest.planId] : undefined;
   const actions = (latest?.actionIds ?? []).map((id) => session.state.actions[id]).filter((item) => item != null);
   const busyLabel = session.stageLabel;
-  const showThinking = (Boolean(busyLabel) || session.state.thinking.length > 0) && !latest?.recorded;
+  const showThinking = (Boolean(busyLabel) || session.state.thinking.length > 0 || Boolean(session.state.lastSeen)) && !latest?.recorded;
   const typewriter = useTypewriter(EXAMPLE_CUES, { active: session.draft.length === 0 && !session.recordedDemo });
   const placeholder = session.recordedDemo ? "Try a recorded line, like “ugh, it's bright”" : typewriter.text + (typewriter.cursor ? "|" : "");
 
@@ -150,6 +152,9 @@ export default function Home() {
                     <ThinkingLabel label={busyLabel} />
                   </p>
                 ) : null}
+                {session.state.lastSeen ? (
+                  <p className={"text-sm text-neutral-600 " + (session.state.thinking.length ? "mb-3" : "")}>{session.state.lastSeen}</p>
+                ) : null}
                 {session.state.thinking.map((step) => (
                   <div key={step.label} className="mb-3 last:mb-0">
                     <p className="text-xs font-medium tracking-tight text-neutral-400">{step.label}</p>
@@ -232,9 +237,9 @@ export default function Home() {
           </section>
         )}
 
-        {turns.length > 1 ? (
+        {earlier.length > 0 ? (
           <ol className="mx-auto flex w-full max-w-3xl flex-col gap-2 text-sm text-neutral-500">
-            {turns.slice(0, -1).map((turn) => (
+            {earlier.map((turn) => (
               <li key={turn.id}>
                 <time dateTime={new Date(turn.createdAt).toISOString()}>{new Date(turn.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time>
                 {" · "}

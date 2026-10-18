@@ -89,6 +89,30 @@ describe("projectHomeToRoom", () => {
     expect(after.phone.delivery).toBe("accepted");
   });
 
+  it("opens the front door and shows the phone texting", () => {
+    const room = projectHomeToRoom({
+      home: {
+        ...emptyHome(),
+        known: true,
+        doors: { front_door: "open" },
+        caregiver: {
+          alertId: "Alex",
+          message: "Sam needs help",
+          severity: "info",
+          delivery: "delivered",
+          recipient: "Alex",
+          animateUntil: NOW + 4000,
+        },
+      },
+      actions: [],
+      question: null,
+      now: NOW,
+    });
+    expect(room.door.open).toBe(true);
+    expect(room.phone.mode).toBe("texting");
+    expect(room.phone.to).toBe("Alex");
+  });
+
   it("marks a proposed lamp change without moving the ceiling", () => {
     const room = projectHomeToRoom({
       home: emptyHome(),

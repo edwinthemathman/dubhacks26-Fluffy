@@ -24,6 +24,8 @@ export function projectHomeToRoom(input: {
   if (ceiling) room.ceiling = { level: ceiling.luminosity, warmth: ceiling.warmth };
   const blind = Object.values(home.blinds)[0];
   if (blind) room.blinds = { position: blind.position };
+  if (home.doors.front_door === "open") room.door.open = true;
+  if (home.doors.front_door === "closed") room.door.open = false;
   const speaker = home.speaker;
   room.speaker = {
     playing: speaker.confirmed && speaker.playback === "playing",

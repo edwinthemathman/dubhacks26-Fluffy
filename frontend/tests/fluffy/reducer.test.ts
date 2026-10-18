@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeEvent } from "@/lib/fluffy/normalizeEvent";
 import { thinkingLabel } from "@/lib/fluffy/phrases";
-import { createSession, dedupeTurns, reduceSession } from "@/lib/fluffy/reducer";
+import { activityTurn, createSession, dedupeTurns, reduceSession } from "@/lib/fluffy/reducer";
 import type { CanonicalEvent, SessionState } from "@/lib/fluffy/types";
 
 const NOW = 1_700_000_000_000;
@@ -171,6 +171,21 @@ describe("session reducer", () => {
     expect(collapsed[0].actionIds).toEqual(["act_1"]);
     expect(collapsed[0].observations.map((item) => item.text)).toEqual(["Perceptron proposed a dim."]);
     expect(collapsed[0].text).toBe("dim the lamp");
+  });
+
+  it("keeps the turn that called a tool after a later empty turn", () => {
+    let state = apply([
+      { type: "turn.start", turnId: "turn_act", source: "vision" },
+      { type: "action", actionId: "c1", turnId: "turn_act", tool: "dim_lights", status: "proposed" },
+      { type: "turn.start", turnId: "turn_idle", source: "vision" },
+    ]);
+    expect(activityTurn(state)?.id).toBe("turn_act");
+    state = feed(state, { type: "think", note: "Saw the lamp" });
+    expect(state.turns.map((turn) => turn.id)).toEqual(["turn_act", "turn_idle"]);
+    expect(state.lastSeen).toBe("Saw the lamp");
+    const quiet = feed(createSession("ses_1"), { type: "think", note: "Checking the room" });
+    expect(quiet.turns).toEqual([]);
+    expect(quiet.lastSeen).toBe("Checking the room");
   });
 
   it("shows the inference stage without treating a frame ack as analysis", () => {

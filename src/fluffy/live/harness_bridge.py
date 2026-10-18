@@ -1,4 +1,4 @@
-"""Host one live loop inside the harness and hand proposals to Runtime."""
+"""Host one live loop inside the harness. The loop runs its own tools."""
 
 from __future__ import annotations
 
@@ -11,10 +11,8 @@ from dataclasses import dataclass, field
 
 from fluffy.brain.habits import load_habits
 from fluffy.config import RuntimeSettings
-from fluffy.ids import new_id
 from fluffy.live.loop import LiveLoop, PerceptronPerceiver
 from fluffy.live.perceive import Read
-from fluffy.models.contracts import SCHEMA_VERSION, ActionProposal, Observation, PlanSubmission
 from fluffy.profile import load_profiles
 from fluffy.server.runtime import Runtime
 
@@ -93,26 +91,9 @@ class HarnessPerception:
         profile_id = "speech_cognitive" if "speech_cognitive" in profiles else next(iter(profiles))
         habits_path = settings.root / "config" / "habits.toml"
         habits = load_habits(habits_path) if habits_path.exists() else None
-        holder: dict[str, HarnessPerception] = {}
-
-        async def submit_plan(plan, turn_id: str) -> None:
-            await holder["self"]._submit(plan, turn_id)
-
         perceiver = PerceptronPerceiver(client) if client is not None else UnavailablePerceiver()
-        live = LiveLoop(
-            perceiver,
-            profiles,
-            profile_id=profile_id,
-            habits=habits,
-            delegate_execution=True,
-            submit_plan=submit_plan,
-            on_clap=lambda: {"ok": False, "error": "clap playback stays with the executor"},
-            on_volume=lambda volume: {"ok": False, "error": "volume stays with the executor"},
-            on_pause=lambda: {"ok": False, "error": "pause stays with the executor"},
-        )
-        perception = cls(runtime=runtime, settings=settings, loop=live, client=client)
-        holder["self"] = perception
-        return perception
+        live = LiveLoop(perceiver, profiles, profile_id=profile_id, habits=habits, delegate_execution=False)
+        return cls(runtime=runtime, settings=settings, loop=live, client=client)
 
     async def start(self) -> None:
         self._queue = asyncio.Queue()
@@ -205,49 +186,6 @@ class HarnessPerception:
                 await self.runtime.emit(self.settings.session_id, kind, payload)
             except Exception:
                 log.warning("live event %s was not emitted", kind)
-
-    async def _submit(self, plan, turn_id: str) -> None:
-        room = "living_room"
-        observation = Observation(
-            observation_id=new_id("obs"),
-            session_id=self.settings.session_id,
-            kind="video",
-            captured_at=self.runtime.clock.now(),
-            room=room,
-            supports=["scene_change"],
-            targets=[],
-            summary=(plan.intent or "Visual proposal")[:240],
-            source="live",
-        )
-        self.runtime.remember_observation(observation)
-        submission = PlanSubmission(
-            schema_version=SCHEMA_VERSION,
-            session_id=self.settings.session_id,
-            intent=(plan.intent or "Visual proposal")[:240],
-            trigger={"kind": "vision", "event": "scene_change", "room": room},
-            actions=[
-                ActionProposal(
-                    action_id=new_id("act"),
-                    tool=action.tool,
-                    args=dict(action.args),
-                    evidence_ids=[observation.observation_id],
-                )
-                for action in plan.actions[:8]
-            ],
-            reasoning_summary=(plan.reasoning_summary or "Visual proposal")[:500],
-        )
-        await self.runtime.emit(
-            self.settings.session_id,
-            "inference.status",
-            {"stage": "submit", "status": "started", "turn_id": turn_id},
-        )
-        result = await self.runtime.submit(submission, explicit=False)
-        await self.runtime.emit(
-            self.settings.session_id,
-            "turn.end",
-            {"turn_id": turn_id, "outcome": str(result.get("status") or "submitted")},
-        )
-
 
 def _resample_pcm16(pcm: bytes, source: int, target: int) -> bytes:
     chunk = array("h")

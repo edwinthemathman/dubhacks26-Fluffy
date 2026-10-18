@@ -361,26 +361,22 @@ function toolStatus(event: Record<string, unknown>): CanonicalEvent[] | null {
   if (!actionId || !status) return null;
   const mapped = mapToolStatus(status);
   if (!mapped) return null;
-  const detail = asString(event.detail) ?? undefined;
+  const detail = asString(event.detail ?? event.error) ?? undefined;
   const result = asRecord(event.result);
+  const tool = asString(event.tool);
   let next = mapped;
-  let patch: HomePatch | undefined;
   if (mapped === "verified") {
-    const confirmed = result ? providerConfirmed(result) || result.ok === true : false;
-    if (!confirmed) {
-      next = "unknown";
-    } else {
-      patch = patchFromNewState(result?.new_state ?? result, 0) ?? undefined;
-      if (!patch) next = "unknown";
-    }
+    const saidOk = result?.ok === true;
+    const music = isMusicName(tool);
+    if (music ? !saidOk : result != null && !saidOk) next = "unknown";
   }
   return [{
     type: "action",
     actionId,
     planId: asString(event.plan_id ?? event.planId) ?? undefined,
+    tool: tool ?? undefined,
     status: next,
-    detail: next === "unknown" && isMusicName(asString(event.tool)) ? detail ?? "Could not verify playback" : detail,
-    patch,
+    detail: next === "unknown" && isMusicName(tool) ? detail ?? "Could not verify playback" : detail,
   }];
 }
 
@@ -389,7 +385,7 @@ function mapToolStatus(status: string): "proposed" | "approved" | "rejected" | "
   if (status === "approved") return "approved";
   if (status === "asking" || status === "repeated") return "proposed";
   if (status === "rejected" || status === "declined") return "rejected";
-  if (status === "started" || status === "running") return "started";
+  if (status === "submitted" || status === "started" || status === "running") return "started";
   if (status === "failed" || status === "error") return "failed";
   if (status === "done") return "verified";
   return "unknown";
@@ -483,7 +479,7 @@ export function parseHomePayload(raw: unknown, now: number): HomePatch | null {
   }
   const rooms = asRecord(record.rooms);
   if (rooms) return parseRooms(rooms, record, now);
-  if (record.lamp || record.ceiling || record.lights || record.blinds || record.speaker || record.flash || record.caption) {
+  if (record.lamp || record.ceiling || record.lights || record.blinds || record.speaker || record.flash || record.caption || record.phone || record.door) {
     return parseLegacy(record, now);
   }
   const nested = asRecord(record.state);
@@ -659,6 +655,30 @@ function parseLegacy(record: Record<string, unknown>, now: number): HomePatch | 
     if (caption === "invalid") return null;
     patch.caption = caption ?? null;
   }
+  if ("phone" in record) {
+    const phone = asRecord(record.phone);
+    if (phone && phone.mode === "text") {
+      const delivered = phone.delivered === true;
+      patch.caregiver = {
+        alertId: asString(phone.to) ?? "phone",
+        message: asString(phone.preview) ?? "",
+        severity: "info",
+        delivery: delivered ? "delivered" : "accepted",
+        recipient: asString(phone.to) ?? null,
+        animateUntil: now + 4000,
+      };
+    }
+  }
+  if ("door" in record) {
+    const door = asRecord(record.door);
+    if (door) {
+      const doors: Record<string, "open" | "closed"> = {};
+      for (const [name, value] of Object.entries(door)) {
+        if (value === "open" || value === "closed") doors[name] = value;
+      }
+      patch.doors = doors;
+    }
+  }
   return patch;
 }
 
@@ -724,6 +744,10 @@ function readFlash(value: unknown, now: number): HomePatch["flash"] | "invalid" 
     startedAt = startedAt ?? now;
     endedAt = startedAt + duration * 1000;
   }
+  if (endedAt == null && row.active === true) {
+    startedAt = startedAt ?? now;
+    endedAt = now + 3000;
+  }
   if (endedAt == null) return "invalid";
   if (startedAt == null && duration != null) startedAt = endedAt - duration * 1000;
   if (startedAt == null) startedAt = endedAt;
@@ -747,7 +771,7 @@ function readCaption(value: unknown, now: number): HomePatch["caption"] | "inval
 export function patchFromNewState(value: unknown, now: number): HomePatch | null {
   const row = asRecord(value);
   if (!row) return null;
-  if (row.rooms || row.lamp || row.ceiling || row.lights || row.blinds || row.speaker || row.flash) {
+  if (row.rooms || row.lamp || row.ceiling || row.lights || row.blinds || row.speaker || row.flash || row.phone || row.door) {
     return parseHomePayload(row, now);
   }
   return null;

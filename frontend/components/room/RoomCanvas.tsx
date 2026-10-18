@@ -3,13 +3,14 @@
 import { FluffyRoom3D } from "@/features/room/FluffyRoom3D";
 import { projectHomeToRoom } from "@/features/room/projectHomeToRoom";
 import { percentLabel } from "@/lib/fluffy/levels";
+import { activityTurn } from "@/lib/fluffy/reducer";
 import type { ActionModel } from "@/lib/fluffy/types";
 import { useSession } from "@/providers/FluffySessionProvider";
 
 export default function RoomCanvas() {
   const session = useSession();
   const { state, now } = session;
-  const turn = [...state.turns].reverse().find((item) => item.open) ?? state.turns[state.turns.length - 1];
+  const turn = activityTurn(state);
   const actions = (turn?.actionIds ?? []).map((id) => state.actions[id]).filter((item): item is ActionModel => item != null);
   const room = projectHomeToRoom({ home: state.home, actions, question: state.question, now });
   const lights = Object.values(state.home.lights);

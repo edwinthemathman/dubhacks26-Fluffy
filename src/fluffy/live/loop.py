@@ -213,6 +213,7 @@ class DecideRequest:
     asked: str = ""
     answer: str = ""
     room_change: str = ""
+    request_id: str = ""
 
 
 @dataclass
@@ -323,6 +324,7 @@ class LiveLoop:
         self.timers: set[asyncio.Task] = set()
         self._help_text_sent = False
         self.timings = StageTimings()
+        self._call_tools: dict[str, str] = {}
         self._checkin_text_sent = False
         self._pain_text_at: float | None = None
         self._fall_absent_since: float | None = None
@@ -364,7 +366,16 @@ class LiveLoop:
             if "scan the room" in text.lower():
                 self.want_scan = True
             if text and not await self._answer_text(text, by="typing") and not self._spoken_volume(text):
-                self._request(DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text))
+                self._request(
+                    DecideRequest(
+                        "spoken",
+                        text[:40],
+                        set(self.active_cues),
+                        self.now(),
+                        utterance=text,
+                        request_id=str(message.get("request_id") or ""),
+                    )
+                )
         elif kind == "room.scan":
             self.want_scan = True
             # #region agent log
@@ -724,7 +735,7 @@ class LiveLoop:
             action = Action(action_id=self.ids("act"), tool=tool, args=args)
             call_id = self._tool_call(turn, action, notice.kind.replace("_", " "))
             self._apply(tool, args, turn_id)
-            self.emit({"type": "tool.status", "call_id": call_id, "status": "done"})
+            self._tool_status(call_id, "done", tool=tool, result={"ok": True})
         self._end(turn_id, started, "acted")
 
     def _offer_notice(self, notice) -> None:
@@ -983,10 +994,10 @@ class LiveLoop:
             if state is not None:
                 self.emit(state)
             where = result.get("device") or "Spotify"
-            self.emit({"type": "tool.status", "call_id": call_id, "status": "done"})
+            self._tool_status(call_id, "done", result=result)
             self._end(turn_id, started, "acted", note=f"playing {track} on {where}")
             return
-        self.emit({"type": "tool.status", "call_id": call_id, "status": "rejected", "detail": result.get("error") or "could not play"})
+        self._tool_status(call_id, "rejected", detail=result.get("error") or "could not play")
         self._end(turn_id, started, "nothing", note=str(result.get("error") or "could not play the song"))
 
     def _set_speaker_volume(self, raw: Any) -> None:
@@ -1047,10 +1058,10 @@ class LiveLoop:
             state = self.home.apply("stop_sound", {"room": "living_room"})
             if state is not None:
                 self.emit(state)
-            self.emit({"type": "tool.status", "call_id": call_id, "status": "done"})
+            self._tool_status(call_id, "done", result=result)
             self._end(turn_id, started, "acted", note="music stopped")
             return
-        self.emit({"type": "tool.status", "call_id": call_id, "status": "rejected", "detail": result.get("error") or "could not pause"})
+        self._tool_status(call_id, "rejected", detail=result.get("error") or "could not pause")
         self._end(turn_id, started, "nothing", note=str(result.get("error") or "could not stop the music"))
 
     def _pause_spotify(self) -> dict[str, Any]:
@@ -1227,6 +1238,7 @@ class LiveLoop:
             {
                 "type": "ask",
                 "turn_id": turn_id,
+                "question_id": turn_id,
                 "question": question,
                 "choices": choices or ["Yes", "No"],
             }
@@ -1252,14 +1264,7 @@ class LiveLoop:
             self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by, "choice": said[:40]})
         if plan is not None and turn is not None:
             for call_id in turn.call_ids.values():
-                self.emit(
-                    {
-                        "type": "tool.status",
-                        "call_id": call_id,
-                        "status": "rejected",
-                        "detail": "replaced by their answer",
-                    }
-                )
+                self._tool_status(call_id, "rejected", detail="replaced by their answer")
         self.open_turn = None
         self.policy.note_answered()
         return question
@@ -1285,7 +1290,10 @@ class LiveLoop:
         turn_id = self.ids("turn")
         started = self.now()
         self.timings.decide_wait_ms = max(0, int((self.now() - request.at) * 1000))
-        self.emit({"type": "turn.start", "turn_id": turn_id, "kind": request.kind, "trigger": request.trigger})
+        started_event = {"type": "turn.start", "turn_id": turn_id, "kind": request.kind, "trigger": request.trigger}
+        if request.request_id:
+            started_event["request_id"] = request.request_id
+        self.emit(started_event)
         for cue in sorted(request.cues):
             self.emit({"type": "think", "turn_id": turn_id, "note": f"cue: {_CUE_LABEL.get(cue, cue.replace('_', ' '))}"})
         applicable = self.habits.matching(request.cues, self.scene, self.clock.now())
@@ -1404,6 +1412,7 @@ class LiveLoop:
     def _tool_call(self, turn: OpenTurn, action, why: str) -> str:
         call_id = self.ids("call")
         turn.call_ids[action.action_id] = call_id
+        self._call_tools[call_id] = action.tool
         if self.speech_at and self.timings.speech_to_tool_ms is None:
             self.timings.speech_to_tool_ms = max(0, int((self.now() - self.speech_at) * 1000))
         self.emit(
@@ -1418,6 +1427,16 @@ class LiveLoop:
             }
         )
         return call_id
+
+    def _tool_status(self, call_id: str, status: str, **extra: Any) -> None:
+        event: dict[str, Any] = {
+            "type": "tool.status",
+            "call_id": call_id,
+            "status": status,
+            "tool": extra.pop("tool", self._call_tools.get(call_id, "")),
+        }
+        event.update({key: value for key, value in extra.items() if value is not None})
+        self.emit(event)
 
     def _end(self, turn_id: str, started: float, outcome: str, note: str | None = None) -> None:
         if note:
@@ -1451,15 +1470,15 @@ class LiveLoop:
             if update.status == "asking":
                 self.open_turn = turn
                 for call_id in turn.call_ids.values():
-                    self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id if plan else None, "status": "asking"})
-                self.emit({"type": "ask", "turn_id": turn.turn_id, "question": question, "choices": ["Yes", "No"]})
+                    self._tool_status(call_id, "asking", plan_id=plan.plan_id if plan else None)
+                self.emit({"type": "ask", "turn_id": turn.turn_id, "question_id": turn.turn_id, "question": question, "choices": ["Yes", "No"]})
             self._say(turn.turn_id, question, voice=True)
             return "asked"
         status = "declined" if update.status == "declined" else "rejected"
         if update.status == "declined":
             self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by or "none", "choice": "no"})
         for call_id in turn.call_ids.values():
-            self.emit({"type": "tool.status", "call_id": call_id, "status": status, "detail": update.reason[:60]})
+            self._tool_status(call_id, status, detail=update.reason[:60])
         if status == "rejected" and update.reason and update.reason != "replaced by their answer":
             self._say(turn.turn_id, _brief(update.reason), voice=True)
         if self.open_turn is turn:
@@ -1555,7 +1574,7 @@ class LiveLoop:
             return
         for action in plan.actions:
             call_id = turn.call_ids.get(action.action_id) or self._tool_call(turn, action, "")
-            self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "approved"})
+            self._tool_status(call_id, "approved", plan_id=plan.plan_id, tool=action.tool)
             if action.tool == "alert_caregiver" and self._help_text_sent:
                 result = {"ok": True, "delivered": True, "to": "caregiver"}
             else:
@@ -1564,10 +1583,10 @@ class LiveLoop:
                     self._help_text_sent = True
             if result.get("ok", True):
                 self._apply(action.tool, action.args, turn.turn_id, result)
-                self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "done"})
+                self._tool_status(call_id, "done", plan_id=plan.plan_id, tool=action.tool, result=result)
             else:
                 detail = str(result.get("error") or "didn't work")[:60]
-                self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "failed", "detail": detail})
+                self._tool_status(call_id, "failed", plan_id=plan.plan_id, tool=action.tool, detail=detail, error=detail)
 
     def _apply(self, tool: str, args: dict[str, Any], turn_id: str | None, result: dict[str, Any] | None = None) -> None:
         state = self.home.apply(tool, args, result)
@@ -1635,7 +1654,7 @@ class LiveLoop:
             turn = OpenTurn(self.safety_turn)
             if effect.kind == "checkin":
                 self.emit({"type": "safety", "state": SAFETY_UI.get(self.safety.phase, "checkin1")})
-                self.emit({"type": "ask", "turn_id": turn.turn_id, "question": effect.text, "choices": ["I'm okay", "Need help"]})
+                self.emit({"type": "ask", "turn_id": turn.turn_id, "question_id": turn.turn_id, "question": effect.text, "choices": ["I'm okay", "Need help"]})
                 if trigger == "pain":
                     self._checkin_text_sent = False
                     self._pain_text_at = self.now() + PAIN_TEXT_S
@@ -1695,7 +1714,7 @@ class LiveLoop:
     def _handoff_plan(self, plan: Plan, turn: OpenTurn) -> None:
         for action in plan.actions:
             call_id = turn.call_ids.get(action.action_id) or self._tool_call(turn, action, "")
-            self.emit({"type": "tool.status", "call_id": call_id, "plan_id": plan.plan_id, "status": "submitted", "detail": "Sent to the executor"})
+            self._tool_status(call_id, "submitted", plan_id=plan.plan_id, detail="Sent to the executor")
         if self.submit_plan is None:
             return
         plan_ref = plan

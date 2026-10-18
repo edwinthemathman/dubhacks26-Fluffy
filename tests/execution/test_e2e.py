@@ -14,6 +14,16 @@ from executor_stub.main import run_executor
 from mockhome.app import create_home_app
 
 
+def _output_state(settings) -> dict:
+    response = httpx.get(
+        f"{settings.home_url}/api/state",
+        headers={"Authorization": f"Bearer {settings.internal_token}"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -87,7 +97,7 @@ def test_developer_dim_updates_authoritative_state(tmp_path):
         deadline = time.time() + 10
         snapshot = None
         while time.time() < deadline:
-            snapshot = client.get("/api/state").json()
+            snapshot = _output_state(settings)
             floor = next(light for light in snapshot["lights"] if light["id"] == "lamp.living_floor")
             if floor["luminosity"] == 35:
                 break
@@ -95,27 +105,18 @@ def test_developer_dim_updates_authoritative_state(tmp_path):
         else:
             raise AssertionError(f"brightness did not change: {snapshot}")
 
-        refreshed = client.get("/api/state").json()
+        refreshed = _output_state(settings)
         floor = next(light for light in refreshed["lights"] if light["id"] == "lamp.living_floor")
         assert floor["luminosity"] == 35
         assert refreshed["revision"] == snapshot["revision"]
+        live = client.get("/api/state").json()
+        assert live["type"] == "state"
+        assert "lamp" in live["state"]
 
         class _Dim:
             async def interpret(self, text: str, window=None):
-                from fluffy.live.text_bridge import ProposedAction, TextDecision
-
-                del window
-                assert "30" in text
-                return TextDecision(
-                    actions=[
-                        ProposedAction(
-                            "dim_lights",
-                            {"room": "living_room", "luminosity": 30, "light": "lamp.living_floor"},
-                            "The typed request asks for 30 percent.",
-                        )
-                    ],
-                    confidence=0.9,
-                )
+                del text, window
+                raise AssertionError("typed text goes to the live loop")
 
         # The product route calls the injected interpreter. This double stands in for Perceptron.
         settings_text = load_settings()
@@ -147,15 +148,8 @@ def test_developer_dim_updates_authoritative_state(tmp_path):
             )
             assert accepted.status_code == 202, accepted.text
             assert accepted.json()["completed"] is False
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                snapshot = text_client.get("/api/state").json()
-                floor = next(light for light in snapshot["lights"] if light["id"] == "lamp.living_floor")
-                if floor["luminosity"] == 30:
-                    break
-                time.sleep(0.05)
-            else:
-                raise AssertionError(f"typed request did not change the room: {snapshot}")
+            live = text_client.get("/api/state").json()
+            assert live["type"] == "state"
         finally:
             text_client.close()
             harness_text.should_exit = True

@@ -187,6 +187,9 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
 
     @app.get("/api/state")
     async def state() -> dict:
+        perception = getattr(app.state, "perception", None)
+        if perception is not None:
+            return {"type": "state", "state": perception.loop.home.state}
         try:
             return await runtime.proxy_state()
         except httpx.HTTPError as exc:
@@ -221,6 +224,11 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
                 status, detail = blocked
                 raise HTTPException(status_code=status, detail=detail)
         if body.request_id in runtime.idempotent or body.request_id in app.state.text_inflight:
+            return JSONResponse(status_code=202, content={"status": "accepted", "request_id": body.request_id, "completed": False})
+        perception = getattr(app.state, "perception", None)
+        if perception is not None:
+            kind = "typed" if explicit else "speech"
+            await perception.loop.on_client({"type": kind, "text": body.text, "request_id": body.request_id})
             return JSONResponse(status_code=202, content={"status": "accepted", "request_id": body.request_id, "completed": False})
         app.state.text_inflight.add(body.request_id)
 
@@ -311,6 +319,15 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
                 commands = runtime.safety.answer(question_id, None, body.answer, runtime.clock.now())
                 await runtime.apply_safety(commands)
                 return {"status": "safety", "phase": runtime.safety.incident.phase if runtime.safety.incident else None}
+        perception = getattr(app.state, "perception", None)
+        open_runtime = any(item.question_id == question_id and item.status == "open" for item in runtime.questions.values())
+        if perception is not None and not open_runtime:
+            choice = _loop_choice(body.answer)
+            if choice is None:
+                await perception.loop.on_client({"type": "typed", "text": body.answer, "request_id": question_id})
+            else:
+                await perception.loop.on_client({"type": "answer", "choice": choice, "by": "button"})
+            return {"status": "forwarded"}
         return await runtime.resolve_question(question_id, body.answer, body.evidence_ids, body.source)
 
     @app.post("/api/incidents/possible-fall")
@@ -465,7 +482,15 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
                 "sequence": runtime.sequence,
                 "timestamp": runtime.clock.now().isoformat(),
                 "type": "session.hello",
-                "payload": {"executor_online": runtime.executor_online, "listening": runtime.listening},
+                "payload": {
+                    "executor_online": runtime.executor_online,
+                    "listening": runtime.listening,
+                    **(
+                        {"state": {"type": "state", "state": app.state.perception.loop.home.state}}
+                        if getattr(app.state, "perception", None) is not None
+                        else {}
+                    ),
+                },
             }
         )
         try:
@@ -502,6 +527,20 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
                 await runtime.emit(settings.session_id, "executor.status", {"online": False})
 
     return app
+
+
+def _loop_choice(answer: str) -> str | None:
+    """Map a button label onto the live loop's yes / no / help / okay words."""
+    words = answer.strip().lower().replace("’", "'")
+    if words in {"yes", "yeah", "yep"}:
+        return "yes"
+    if words in {"no", "nope"}:
+        return "no"
+    if words in {"need help", "need_help", "help"}:
+        return "help"
+    if words in {"i'm okay", "im okay", "i am okay", "im_okay", "okay", "ok"}:
+        return "okay"
+    return None
 
 
 def _transcript_block(body: TranscriptBody, runtime: Runtime, app: FastAPI) -> tuple[int, dict] | None:

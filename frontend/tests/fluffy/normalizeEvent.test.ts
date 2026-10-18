@@ -88,6 +88,39 @@ describe("normalizeEvent", () => {
     expect(event).toMatchObject({ type: "action", status: "unknown", detail: "Could not verify playback" });
   });
 
+  it("maps a submitted call to started and a done call without a result to verified", () => {
+    const [started] = normalizeEvent({ type: "tool.status", call_id: "c1", status: "submitted", tool: "dim_lights" }, { now: NOW });
+    expect(started).toMatchObject({ status: "started", tool: "dim_lights" });
+    const [done] = normalizeEvent({ type: "tool.status", call_id: "c1", status: "done", tool: "dim_lights" }, { now: NOW });
+    expect(done).toMatchObject({ status: "verified" });
+    expect(done).not.toHaveProperty("patch");
+    const [music] = normalizeEvent({ type: "tool.status", call_id: "c2", status: "done", tool: "play_music", result: { ok: true } }, { now: NOW });
+    expect(music).toMatchObject({ status: "verified" });
+  });
+
+  it("reads a phone, a door, and a live flash from the loop home", () => {
+    const [event] = normalizeEvent(
+      {
+        type: "state",
+        state: {
+          lamp: { luminosity: 40, warmth: "warm" },
+          phone: { mode: "text", to: "Alex", preview: "Sam needs help", delivered: true },
+          door: { front_door: "open", bedroom_door: "closed" },
+          flash: { active: true, color: "red", pattern: "pulse2" },
+        },
+      },
+      { now: NOW },
+    );
+    expect(event).toMatchObject({
+      type: "snapshot",
+      patch: {
+        caregiver: { recipient: "Alex", message: "Sam needs help", delivery: "delivered", animateUntil: NOW + 4000 },
+        doors: { front_door: "open", bedroom_door: "closed" },
+        flash: { startedAt: NOW, endedAt: NOW + 3000, pulses: 2 },
+      },
+    });
+  });
+
   it("reads a version 2 plan, speech, and incident", () => {
     const plan = normalizeEvent(
       {

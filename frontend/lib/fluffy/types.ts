@@ -68,6 +68,7 @@ export type HomeModel = {
   caption: { text: string; until: number | null } | null;
   caregiver: CaregiverModel | null;
   caregiverName: string | null;
+  doors: Record<string, "open" | "closed">;
 };
 
 export type HomePatch = {
@@ -79,6 +80,7 @@ export type HomePatch = {
   caption?: { text: string; until: number | null } | null;
   caregiver?: CaregiverModel | null;
   caregiverName?: string | null;
+  doors?: Record<string, "open" | "closed">;
   /** When true, omitted devices stay unknown instead of keeping stale values. */
   replace?: boolean;
 };
@@ -190,6 +192,7 @@ export type SessionState = {
   inference: "idle" | "running";
   stage: string | null;
   thinking: { label: string; text: string }[];
+  lastSeen: string | null;
   observationPending: boolean;
   notice: string | null;
   inputAccepted: boolean;

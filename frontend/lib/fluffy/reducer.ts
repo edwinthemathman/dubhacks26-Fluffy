@@ -29,6 +29,7 @@ export function emptyHome(): HomeModel {
     caption: null,
     caregiver: null,
     caregiverName: null,
+    doors: {},
   };
 }
 
@@ -57,6 +58,7 @@ export function createSession(sessionId = "local"): SessionState {
     inference: "idle",
     stage: null,
     thinking: [],
+    lastSeen: null,
     observationPending: false,
     notice: null,
     inputAccepted: false,
@@ -330,12 +332,15 @@ function mergeTurn(current: TurnModel, incoming: TurnModel): TurnModel {
 }
 
 function addObservation(state: SessionState, text: string, turnId: string | undefined, now: number, pending: boolean): SessionState {
-  const target = turnId ?? [...state.turns].reverse().find((turn) => turn.open)?.id;
+  const open = [...state.turns].reverse().find((turn) => turn.open);
+  const target = turnId ?? open?.id;
   if (!target) {
-    return addObservation(startTurn(state, { type: "turn.start", turnId: turnId ?? `turn_${now}`, source: "system" }, now), text, turnId ?? `turn_${now}`, now, pending);
+    if (!turnId) return { ...state, lastSeen: text, observationPending: pending };
+    return addObservation(startTurn(state, { type: "turn.start", turnId, source: "system" }, now), text, turnId, now, pending);
   }
   return {
     ...state,
+    lastSeen: text,
     observationPending: pending,
     inference: pending ? state.inference : state.inference,
     turns: state.turns.map((turn) => {
@@ -344,6 +349,15 @@ function addObservation(state: SessionState, text: string, turnId: string | unde
       return { ...turn, observations };
     }),
   };
+}
+
+/** The turn the action card should show: the latest one that did something, else the latest turn. */
+export function activityTurn(state: SessionState): TurnModel | undefined {
+  for (let index = state.turns.length - 1; index >= 0; index -= 1) {
+    const turn = state.turns[index];
+    if (turn.actionIds.length > 0 || turn.planId) return turn;
+  }
+  return state.turns[state.turns.length - 1];
 }
 
 function addSay(state: SessionState, event: Extract<CanonicalEvent, { type: "say" }>, now: number, historical: boolean): SessionState {
@@ -570,6 +584,7 @@ export function applyPatch(home: HomeModel, patch: HomePatch, now: number, previ
     caption: patch.caption === undefined ? (replace ? null : home.caption) : patch.caption,
     caregiver,
     caregiverName: patch.caregiverName === undefined ? (replace ? null : home.caregiverName) : patch.caregiverName,
+    doors: patch.doors === undefined ? (replace ? {} : home.doors) : { ...(replace ? {} : home.doors), ...patch.doors },
   };
 }
 
