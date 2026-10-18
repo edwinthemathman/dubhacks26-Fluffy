@@ -7,6 +7,8 @@ type Props = {
   active: boolean;
   /** element the lines flow into (left edge) and out of (right edge) */
   targetRef: RefObject<HTMLElement | null>;
+  /** coordinate space. lines stay inside this element instead of the viewport */
+  boundsRef?: RefObject<HTMLElement | null>;
   /** number of lines */
   count?: number;
   /** px the lines reach past the box border into the box */
@@ -94,11 +96,21 @@ type Size = { w: number; h: number };
 export default function BackgroundLines({
   active,
   targetRef,
+  boundsRef,
   count = 10,
   reach = 12,
 }: Props) {
   const [box, setBox] = useState<Box | null>(null);
   const [size, setSize] = useState<Size | null>(null);
+  const [reduce, setReduce] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setReduce(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
 
 
   useEffect(() => {
@@ -108,9 +120,20 @@ export default function BackgroundLines({
     let raf = 0;
     const measure = () => {
       raf = 0;
+      const bounds = boundsRef?.current?.getBoundingClientRect();
+      const originX = bounds?.left ?? 0;
+      const originY = bounds?.top ?? 0;
       const r = el.getBoundingClientRect();
-      setBox({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
-      setSize({ w: window.innerWidth, h: window.innerHeight });
+      setBox({
+        left: r.left - originX,
+        right: r.right - originX,
+        top: r.top - originY,
+        bottom: r.bottom - originY,
+      });
+      setSize({
+        w: bounds?.width ?? window.innerWidth,
+        h: bounds?.height ?? window.innerHeight,
+      });
     };
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(measure);
@@ -119,7 +142,7 @@ export default function BackgroundLines({
     schedule();
     const ro = new ResizeObserver(schedule);
     ro.observe(el);
-    ro.observe(document.documentElement);
+    if (boundsRef?.current) ro.observe(boundsRef.current);
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", schedule, { passive: true });
     return () => {
@@ -128,7 +151,7 @@ export default function BackgroundLines({
       window.removeEventListener("resize", schedule);
       window.removeEventListener("scroll", schedule);
     };
-  }, [targetRef, active]);
+  }, [targetRef, boundsRef, active]);
 
   const ready = box !== null && size !== null;
 
@@ -179,7 +202,7 @@ export default function BackgroundLines({
   return (
     <svg
       aria-hidden
-      className="pointer-events-none fixed inset-0 -z-10 h-full w-full transition-opacity ease-out"
+      className="pointer-events-none absolute inset-0 -z-10 h-full w-full transition-opacity ease-out"
       style={{
 
         opacity: active && ready ? 1 : 0,
@@ -259,7 +282,7 @@ export default function BackgroundLines({
         </g>
 
         {/* case-file cards riding the lines into the box from both sides */}
-        {ready &&
+        {ready && !reduce &&
           // never on the outermost (top/bottom) lines
           CARDS.filter((c) => c.line > 0 && c.line < count - 1).map((c) => {
             const dur = c.dur;

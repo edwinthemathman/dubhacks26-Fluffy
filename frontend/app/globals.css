@@ -93,6 +93,19 @@ body {
   animation: fade-in 0.25s ease-out both;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise-in,
+  .animate-pop-in,
+  .animate-fade-in,
+  .shimmer-text {
+    animation: none;
+  }
+  .shimmer-text {
+    color: #525252;
+    background-image: none;
+  }
+}
+
 /* modal panel: transform only (never opacity) so nothing behind it can show
    through the panel mid-animation; the backdrop handles the fade */
 @keyframes modal-in {

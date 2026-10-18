@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from typing import Any
 
 import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fluffy.clock import Clock, SystemClock
 from fluffy.config import HomeConfig, load_home
 from fluffy.link.executor_ws import ExecutorLink
@@ -73,6 +75,12 @@ def create_app(
                     await task
 
     app = FastAPI(title="Fluffy harness", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_ui_origins(),
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Accept"],
+    )
     app.state.settings = settings
     app.state.home = home
     app.state.bound = bound
@@ -162,6 +170,11 @@ def create_app(
             await link.disconnect(websocket)
 
     return app
+
+
+def _ui_origins() -> list[str]:
+    raw = os.environ.get("FLUFFY_UI_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def current_tools(app: FastAPI) -> BoundTools:
