@@ -11,6 +11,7 @@ from typing import Literal
 
 from fluffy.brain.arbiter import LOW_CONFIDENCE, Arbiter
 from fluffy.brain.cues import build_help_plan, help_question, judge
+from fluffy.brain.habits import HabitBook
 from fluffy.clock import Clock
 from fluffy.models import Consent, Plan
 from fluffy.perception.scene import SceneState
@@ -60,8 +61,10 @@ class ConsentManager:
         *,
         transcript_clear: bool,
         scene: SceneState | None = None,
+        habits: HabitBook | None = None,
+        cues: set[str] | None = None,
     ) -> ConsentUpdate:
-        decision = judge(scene, plan)
+        decision = judge(scene, plan, cues)
         if decision == "ask_for_help":
             return self._ask(
                 _held_help_plan(plan, profile, self.clock),
@@ -88,6 +91,10 @@ class ConsentManager:
                 reason="this offer was declined in the last 30 minutes",
             )
 
+        habit_update = self._by_habit(plan, scene, habits, cues)
+        if habit_update is not None:
+            return habit_update
+
         plan = _apply_spoken_consent(plan, profile, transcript_clear=transcript_clear)
         if decision == "act" and plan.consent.given_by is None:
             plan = _apply_cue(plan, self.clock)
@@ -101,6 +108,37 @@ class ConsentManager:
             return ConsentUpdate(status="dropped", plan=plan, reason=verdict.reason)
         if verdict.status == "drop":
             return ConsentUpdate(status="dropped", plan=plan, reason=verdict.reason)
+        return self._ask_if_present(plan, profile, cues)
+
+    def _by_habit(
+        self,
+        plan: Plan,
+        scene: SceneState | None,
+        habits: HabitBook | None,
+        cues: set[str] | None,
+    ) -> ConsentUpdate | None:
+        """A matching habit is standing consent, down to the habit's own confidence."""
+        if habits is None or plan.action_class != "comfort" or plan.trigger.kind == "spoken":
+            return None
+        if plan.consent.given_by is not None:
+            return None
+        if self.arbiter._declined_recently(plan):
+            return ConsentUpdate(
+                status="dropped",
+                plan=plan,
+                reason="this offer was declined in the last 30 minutes",
+            )
+        matched = habits.covering(plan, set(cues or ()), scene, self.clock.now())
+        if matched is None or plan.confidence < matched.min_confidence:
+            return None
+        consent = Consent(required=True, given_by="habit", at=self.clock.now())
+        plan = plan.model_copy(update={"consent": consent})
+        habits.note_used(matched, self.clock.now())
+        return self._approved(plan)
+
+    def _ask_if_present(self, plan: Plan, profile: Profile, cues: set[str] | None) -> ConsentUpdate:
+        if cues and "left_room" in cues and plan.action_class == "comfort":
+            return ConsentUpdate(status="dropped", plan=plan, reason="nobody is in the room")
         return self._ask(plan, profile)
 
     def answer_voice(self, text: str) -> ConsentUpdate | None:

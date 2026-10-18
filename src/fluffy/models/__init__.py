@@ -2,8 +2,9 @@
 
 Part 1 owns this shape (`01-execution.md`). These models match that write-up
 so this branch can build and test plans before the execution code is merged.
-`given_by` includes `pointing` and `cue`, which the written enum does not list yet.
+`given_by` includes `pointing`, `cue`, and `habit`, which the written enum does not list yet.
 `cue` means a clear routine comfort action from what was seen and heard.
+`habit` means the person asked for this ahead of time.
 """
 
 from datetime import datetime, timedelta
@@ -25,6 +26,7 @@ ConsentVia = Literal[
     "spoken_request",
     "profile",
     "cue",
+    "habit",
 ]
 
 

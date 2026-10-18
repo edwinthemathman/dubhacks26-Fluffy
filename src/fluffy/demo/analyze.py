@@ -15,6 +15,12 @@ from perceptron import Client, SDKError, pydantic_format, video
 
 from fluffy.brain.consent import ConsentManager
 from fluffy.brain.cues import build_help_plan, derive
+from fluffy.brain.habits import (
+    clip_transition_cues,
+    habit_note,
+    load_habits,
+    room_change_line,
+)
 from fluffy.brain.decide import (
     _asked,
     _plan_from_devices,
@@ -106,7 +112,8 @@ def _analyze_uploaded(
     if not transcript and scene is not None and scene.said.strip():
         transcript = scene.said.strip()
         trace[-1]["summary"] = transcript
-    cues = derive(scene)
+    book = _habit_book()
+    cues = derive(scene) | clip_transition_cues(scene)
     trace.append(
         {
             "step": "scene",
@@ -117,11 +124,21 @@ def _analyze_uploaded(
     )
     trace.append({"step": "cues", "cues": sorted(cues)})
     scene_text = _scene_text(scene)
+    room_change = room_change_line(profile.agreements.person_name, clip_transition_cues(scene))
+    applicable = book.matching(cues, scene, clock.now())
 
     # Always run the decision call. It watches the clip itself, so it can
     # catch what the structured scene read missed. Skipping it whenever the
     # scene read found no cue was the main source of missed actions.
-    user_text = _user_text(profile, utterance, scene, cues, transcript=transcript)
+    user_text = _user_text(
+        profile,
+        utterance,
+        scene,
+        cues,
+        transcript=transcript,
+        room_change=room_change,
+        habit_lines=book.prompt_lines(applicable, profile),
+    )
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},
         {
@@ -204,6 +221,7 @@ def _analyze_uploaded(
         ids=IdFactory(),
     )
     plan = complete_paired_request(plan, f"{transcript}\n{utterance}")
+    habit = None
     if plan is None and "fall" in cues:
         plan = build_help_plan(clock, profile)
         trace.append(
@@ -213,6 +231,13 @@ def _analyze_uploaded(
                 "tool": "alert_caregiver",
             }
         )
+    elif plan is None and applicable:
+        habit = applicable[0]
+        plan = book.plan_for(habit, profile=profile, clock=clock, ids=IdFactory(), snapshot_id="clip")
+    elif plan is not None:
+        habit = book.covering(plan, cues, scene, clock.now())
+    if habit is not None:
+        trace.append({"step": "habit", "summary": habit_note(habit)})
 
     consent = None
     if plan is not None:
@@ -221,6 +246,8 @@ def _analyze_uploaded(
             profile,
             transcript_clear=bool(utterance),
             scene=scene,
+            habits=book,
+            cues=cues,
         )
         consent = {
             "status": update.status,
@@ -498,6 +525,8 @@ def _user_text(
     transcript: str = "",
     asked: str = "",
     answer: str = "",
+    room_change: str = "",
+    habit_lines: list[str] | None = None,
 ) -> str:
     said = utterance or "(nothing typed)"
     words = transcript.strip() or "(none)"
@@ -513,8 +542,7 @@ def _user_text(
         sounds = ", ".join(labels) if labels else "none"
         lighting = scene.lighting
     flagged = ", ".join(sorted(cues)) if cues else "none"
-    return "\n".join(
-        [
+    lines = [
             "The video is the ground truth. Watch it start to end, then decide.",
             "A quick first read of the clip is below. It can miss things or be wrong; "
             "where it disagrees with the video, trust the video.",
@@ -523,6 +551,14 @@ def _user_text(
             f"- Lighting: {lighting}",
             f"- Sounds: {sounds}",
             f"- Cues flagged so far: {flagged}",
+    ]
+    if room_change:
+        lines.append(f"- Room change: {room_change}")
+    if habit_lines:
+        lines.append("- Habits that apply now:")
+        lines.extend(f"- {line}" for line in habit_lines)
+    lines.extend(
+        [
             f"- Transcript: {words}",
             "The transcript is a decision. If it asks for several things, call every matching tool "
             "in this same turn. It's getting late and they want music means play_sound sound=music "
@@ -554,6 +590,16 @@ def _user_text(
             "If nothing in the picture or the transcript needs a change, call no tools.",
         ]
     )
+    return "\n".join(lines)
+
+
+def _habit_book():
+    path = Path(__file__).resolve().parents[3] / "config" / "habits.toml"
+    if not path.exists():
+        from fluffy.brain.habits import HabitBook
+
+        return HabitBook()
+    return load_habits(path)
 
 
 def _result(

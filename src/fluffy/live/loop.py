@@ -23,12 +23,14 @@ from typing import Any, Callable, Protocol
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
 from fluffy.brain.cues import NOTIFY_SOUNDS, derive
 from fluffy.brain.decide import _plan_from_devices, complete_paired_request
+from fluffy.brain.habits import HabitBook, habit_note, habit_why
 from fluffy.brain.safety import CHECKIN_TEXT, SafetyEffect, SafetyMachine
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
 from fluffy.live.buffers import AudioBuffer, FrameBuffer, SpeechGate, pad_pcm, to_wav
 from fluffy.live.home import HomeState
 from fluffy.live.perceive import Decision, Read, Window
+from fluffy.live.presence import RoomPresence
 from fluffy.live.voice_policy import VoicePolicy
 from fluffy.models import Plan, Trigger
 from fluffy.perception.scene import SceneState, SoundRead, TranscriptRead, apply_sound_read
@@ -61,6 +63,7 @@ class LiveSettings:
     audible_floor: float = 80.0
     # A single squint or glasses reflection used to become glare immediately.
     glare_hold_s: float = 8.0
+    glare_cooldown_s: float = 600
     budget_per_min: int = 40
     caption_s: float = 15.0
 
@@ -81,6 +84,8 @@ class Perceiver(Protocol):
         effort: str,
         asked: str = "",
         answer: str = "",
+        room_change: str = "",
+        habit_lines: list[str] | None = None,
     ) -> Decision: ...
 
 
@@ -105,7 +110,20 @@ class PerceptronPerceiver:
     async def transcript(self, wav, profile):
         return await self._p.read_transcript(self.client, wav, profile)
 
-    async def decide(self, window, *, profile, utterance, scene, cues, effort, asked="", answer=""):
+    async def decide(
+        self,
+        window,
+        *,
+        profile,
+        utterance,
+        scene,
+        cues,
+        effort,
+        asked="",
+        answer="",
+        room_change="",
+        habit_lines=None,
+    ):
         return await self._p.decide(
             self.client,
             window,
@@ -116,6 +134,8 @@ class PerceptronPerceiver:
             effort=effort,
             asked=asked,
             answer=answer,
+            room_change=room_change,
+            habit_lines=habit_lines,
         )
 
 
@@ -129,6 +149,7 @@ class DecideRequest:
     utterance: str = ""
     asked: str = ""
     answer: str = ""
+    room_change: str = ""
 
 
 @dataclass
@@ -149,6 +170,7 @@ class LiveLoop:
         settings: LiveSettings | None = None,
         clock: Clock | None = None,
         emit: Emit | None = None,
+        habits: HabitBook | None = None,
     ) -> None:
         self.perceiver = perceiver
         self.profiles = profiles
@@ -180,8 +202,12 @@ class LiveLoop:
         self.epoch = 0
         self.mute_until = 0.0
         self.glare_since: float | None = None
+        self.glare_quiet_until: float | None = None
         self.last_said = ""
         self.speech_at = 0.0
+        self.habits = habits or HabitBook()
+        self.presence = RoomPresence()
+        self.room_change = ""
         self.says: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.timers: set[asyncio.Task] = set()
 
@@ -256,8 +282,11 @@ class LiveLoop:
         self.latched.clear()
         self.active_cues.clear()
         self.glare_since = None
+        self.glare_quiet_until = None
         self.last_said = ""
         self.speech_at = 0.0
+        self.presence = RoomPresence()
+        self.room_change = ""
         self.pending = None
         self.emit({"type": "safety", "state": "ok"})
 
@@ -328,6 +357,8 @@ class LiveLoop:
         self.audio.clear()
         self.gate = SpeechGate()
         self.glare_since = None
+        self.presence = RoomPresence()
+        self.room_change = ""
         self.motion_started = None
         self.last_motion = None
         self.pending = None
@@ -376,7 +407,9 @@ class LiveLoop:
             # (a bouncing ball read as a thud). Real sounds come from the mic.
             scene = scene.model_copy(update={"sounds": ["none"], "said": ""})
         self.scene = scene
-        cues = self._held_cues(derive(scene))
+        presence = self.presence.observe(scene, self.now(), self.profile.agreements.person_name)
+        self.room_change = presence.room_change
+        cues = self._scene_cues(scene, presence.cues)
         self.emit({"type": "sense.see", "thumb": self._thumb(), "chips": _chips(scene, cues)})
         cleared = self.active_cues - cues
         for cue in cleared:
@@ -398,15 +431,32 @@ class LiveLoop:
                     self.now(),
                     wav=window.wav,
                     utterance=said,
+                    room_change=self.room_change,
                 )
             )
 
+    def _scene_cues(self, scene: SceneState, presence: set[str]) -> set[str]:
+        """Live arrivals come from the room tracker, not one scene read."""
+        cues = self._held_cues(derive(scene))
+        if "entered_room" not in presence:
+            cues.discard("arriving")
+        return cues | presence
+
+    def _lights_are_up(self) -> bool:
+        lamp = int(self.home.state["lamp"]["luminosity"])
+        ceiling = int(self.home.state["ceiling"]["luminosity"])
+        return lamp >= 40 or ceiling >= 40
+
     def _held_cues(self, cues: set[str]) -> set[str]:
-        """Glare has to stay in view. One squint used to ask immediately."""
+        """Glare has to stay in view, and only while the room is actually bright."""
         now = self.now()
         if "glare" not in cues:
             self.glare_since = None
             return cues
+        cooling = self.glare_quiet_until is not None and now < self.glare_quiet_until
+        if cooling or not self._lights_are_up():
+            self.glare_since = None
+            return set(cues) - {"glare"}
         if self.glare_since is None:
             self.glare_since = now
         if now - self.glare_since < self.s.glare_hold_s:
@@ -420,6 +470,8 @@ class LiveLoop:
             return
         for cue in fresh:
             self.latched[cue] = now
+        if "glare" in fresh:
+            self.glare_quiet_until = now + self.s.glare_cooldown_s
         if "fall" in fresh:
             self._safety_effects(self.safety.on_event("possible_fall"), trigger="fall seen")
         if "fall" in fresh:
@@ -429,7 +481,16 @@ class LiveLoop:
             trigger = "heard: " + ", ".join(sorted(fresh & NOTIFY_SOUNDS))
         else:
             kind = "offer"
-        self._request(DecideRequest(kind, trigger[:40] or ", ".join(sorted(fresh)), set(cues), now, wav=wav))
+        self._request(
+            DecideRequest(
+                kind,
+                trigger[:40] or ", ".join(sorted(fresh)),
+                set(cues),
+                now,
+                wav=wav,
+                room_change=self.room_change,
+            )
+        )
 
     # ---------- hear lane ----------
 
@@ -478,7 +539,8 @@ class LiveLoop:
         self.emit({"type": "sense.hear", "text": sound.heard, "sound": notable})
         if "help" in labels:
             self._safety_effects(self.safety.on_event("distress_call"), trigger="call for help")
-        cues = self._held_cues(derive(apply_sound_read(self.scene, sound)))
+        heard_scene = apply_sound_read(self.scene, sound)
+        cues = self._scene_cues(heard_scene, set()) if heard_scene is not None else set()
         before = dict(self.latched)
         self._on_cues(cues, trigger=sound.heard or ", ".join(sorted(labels)), wav=wav)
         if "speech" not in labels or self._recent_speech():
@@ -628,7 +690,8 @@ class LiveLoop:
         started = self.now()
         self.emit({"type": "turn.start", "turn_id": turn_id, "kind": request.kind, "trigger": request.trigger})
         for cue in sorted(request.cues):
-            self.emit({"type": "think", "turn_id": turn_id, "note": f"cue: {cue.replace('_', ' ')}"})
+            self.emit({"type": "think", "turn_id": turn_id, "note": f"cue: {_CUE_LABEL.get(cue, cue.replace('_', ' '))}"})
+        applicable = self.habits.matching(request.cues, self.scene, self.clock.now())
         window = self._window(self.s.decide_span_s, self.s.decide_frames, wav=request.wav)
         if window is None:
             self._end(turn_id, started, "nothing", note="no frames yet")
@@ -644,6 +707,8 @@ class LiveLoop:
             effort=self.s.decide_effort,
             asked=request.asked,
             answer=request.answer,
+            room_change=request.room_change,
+            habit_lines=self.habits.prompt_lines(applicable, self.profile),
         )
         if not self._live(epoch):
             self._end(turn_id, started, "nothing", note="stopped")
@@ -682,16 +747,38 @@ class LiveLoop:
             else:
                 self._end(turn_id, started, "nothing", note="safety check-in handles this")
             return
+        if plan is None and applicable and "fall" not in request.cues:
+            habit = applicable[0]
+            plan = self.habits.plan_for(
+                habit,
+                profile=self.profile,
+                clock=self.clock,
+                ids=self.ids,
+                snapshot_id=f"live_{turn_id}",
+            )
+            reasons = {action.tool: habit_why(habit) for action in plan.actions}
         if plan is None:
-            if result.asked:
+            if result.asked and "left_room" not in request.cues:
                 self._ask_user(turn_id, started, request, result.asked, result.choices)
                 return
-            if result.reply:
+            if result.reply and "left_room" not in request.cues:
                 self._say(turn_id, result.reply, voice=False)
-            self._end(turn_id, started, "nothing", note="no tools, nothing needed")
+            note = "nobody is in the room" if "left_room" in request.cues else "no tools, nothing needed"
+            self._end(turn_id, started, "nothing", note=note)
             return
-        update = self.consent.consider(plan, self.profile, transcript_clear=spoken, scene=self.scene)
+        pending = self.habits.covering(plan, request.cues, self.scene, self.clock.now())
+        update = self.consent.consider(
+            plan,
+            self.profile,
+            transcript_clear=spoken,
+            scene=self.scene,
+            habits=self.habits,
+            cues=request.cues,
+        )
         final = update.plan or plan
+        if pending is not None and final.consent.given_by == "habit":
+            self.emit({"type": "think", "turn_id": turn_id, "note": habit_note(pending)})
+            reasons = {action.tool: habit_why(pending) for action in final.actions}
         turn = OpenTurn(turn_id)
         for action in final.actions:
             if action.tool == "alert_caregiver" and not update.release:
@@ -893,6 +980,9 @@ class LiveLoop:
         return "data:image/jpeg;base64," + base64.b64encode(frame.jpeg).decode()
 
 
+_CUE_LABEL = {"entered_room": "walked in", "left_room": "left"}
+
+
 def _brief(reason: str) -> str:
     text = reason.strip().rstrip(".")
     if len(text) > 80:
@@ -921,7 +1011,8 @@ def _chips(scene: SceneState, cues: set[str]) -> list[str]:
     if scene.lighting != "normal":
         chips.append(scene.lighting)
     chips.extend(label for label in scene.sounds if label not in {"none", "speech"})
-    chips.extend(f"cue: {cue.replace('_', ' ')}" for cue in sorted(cues))
+    for cue in sorted(cues):
+        chips.append(_CUE_LABEL.get(cue) or f"cue: {cue.replace('_', ' ')}")
     seen: list[str] = []
     for chip in chips:
         if chip not in seen:

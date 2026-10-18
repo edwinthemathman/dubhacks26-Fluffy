@@ -267,6 +267,8 @@ async def decide(
     max_tokens: int = 512,
     asked: str = "",
     answer: str = "",
+    room_change: str = "",
+    habit_lines: list[str] | None = None,
 ) -> Decision:
     """The decision call with tools. Only device calls from the last round count."""
     started = time.perf_counter()
@@ -277,7 +279,7 @@ async def decide(
         transcript = utterance.strip()
     user_text = (
         f"{LIVE_NOTE.format(seconds=window.seconds)}\n"
-        f"{_user_text(profile, utterance, scene, cues, transcript=transcript, asked=asked, answer=answer)}"
+        f"{_user_text(profile, utterance, scene, cues, transcript=transcript, asked=asked, answer=answer, room_change=room_change, habit_lines=habit_lines)}"
     )
     messages: list[Any] = [
         {"role": "system", "content": system_prompt(profile)},

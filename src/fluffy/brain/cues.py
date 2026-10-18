@@ -58,9 +58,13 @@ def derive(scene: SceneState | None) -> set[str]:
     return cues
 
 
-def judge(scene: SceneState | None, plan: Plan | None) -> CueDecision:
+def judge(
+    scene: SceneState | None,
+    plan: Plan | None,
+    cues: set[str] | None = None,
+) -> CueDecision:
     """What to do with this scene and the tool the model chose."""
-    cues = derive(scene)
+    cues = derive(scene) | set(cues or ())
     if "fall" in cues:
         return "ask_for_help"
     if plan is None:
@@ -197,7 +201,7 @@ def _matches(cues: set[str], plan: Plan) -> bool:
     wanted: set[str] = set()
     if "falling_asleep" in cues or "glare" in cues:
         wanted.add("dim")
-    if "arriving" in cues or "getting_dark" in cues:
+    if "arriving" in cues or "entered_room" in cues or "getting_dark" in cues:
         wanted.add("on")
     if wanted == {"dim", "on"}:
         return False

@@ -185,6 +185,8 @@ def system_prompt(profile: Profile) -> str:
             "So never hold back a fitting tool call to be polite or to wait for permission. "
             "Skipping a needed call is the worst mistake.",
             requests,
+            "Habits are things the person asked for in advance. When one applies, propose its action "
+            "with high confidence unless you can see a reason not to.",
             "",
             "EVERY DEVICE CALL",
             "confidence: 0.8-1.0 when the cue is plainly visible or heard, 0.5-0.7 when it is likely, "

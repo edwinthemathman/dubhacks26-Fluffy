@@ -68,7 +68,20 @@ class FakePerceiver:
 
         return Read(value=TranscriptRead(transcript=self.transcript_text), ms=200)
 
-    async def decide(self, window, *, profile, utterance, scene, cues, effort, asked="", answer=""):
+    async def decide(
+        self,
+        window,
+        *,
+        profile,
+        utterance,
+        scene,
+        cues,
+        effort,
+        asked="",
+        answer="",
+        room_change="",
+        habit_lines=None,
+    ):
         self.decide_calls.append({"utterance": utterance, "cues": set(cues), "asked": asked, "answer": answer})
         if self.decide_gate is not None:
             await self.decide_gate.wait()
@@ -88,12 +101,19 @@ def dim(level: int) -> tuple[str, str]:
     )
 
 
-def make(profile: str = "blind", **settings):
+def make(profile: str = "blind", habits=None, **settings):
     clock = FrozenClock()
     fake = FakePerceiver()
     events: list[dict] = []
-    loop = LiveLoop(fake, profiles(), profile_id=profile, clock=clock, emit=events.append,
-                    settings=LiveSettings(**settings))
+    loop = LiveLoop(
+        fake,
+        profiles(),
+        profile_id=profile,
+        clock=clock,
+        emit=events.append,
+        settings=LiveSettings(**settings),
+        habits=habits,
+    )
     return loop, fake, clock, events
 
 
@@ -282,6 +302,79 @@ def test_glare_has_to_stay_before_it_asks():
         await settle(loop)
         assert any(event["type"] == "sense.see" and "cue: glare" in event["chips"] for event in events)
         assert fake.decide_calls and "glare" in fake.decide_calls[-1]["cues"]
+
+    asyncio.run(run())
+
+
+def test_glare_in_a_dim_room_does_not_ask():
+    async def run():
+        loop, fake, clock, events = make(heartbeat_s=1, glare_hold_s=8)
+        loop.home.state["lamp"]["luminosity"] = 30
+        loop.home.state["ceiling"]["luminosity"] = 30
+        fake.scene = SceneState(
+            people=[PersonState(gesture="shielding_eyes", posture="standing")],
+            lighting="bright",
+            summary="hand over their eyes",
+        )
+        feed_frames(loop, clock)
+        await settle(loop)
+        clock.advance(9)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        assert fake.decide_calls == []
+        assert not any(event["type"] == "sense.see" and "cue: glare" in event["chips"] for event in events)
+
+    asyncio.run(run())
+
+
+def test_glare_stays_quiet_for_ten_minutes_after_it_runs():
+    async def run():
+        loop, fake, clock, _ = make(heartbeat_s=1, glare_hold_s=8)
+        fake.scene = SceneState(
+            people=[PersonState(gesture="shielding_eyes", posture="standing")],
+            lighting="bright",
+            summary="hand over their eyes",
+        )
+        feed_frames(loop, clock)
+        await settle(loop)
+        clock.advance(9)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        assert len(fake.decide_calls) == 1
+        clock.advance(40)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        assert len(fake.decide_calls) == 1
+
+    asyncio.run(run())
+
+
+def test_walking_in_runs_the_lights_on_habit_without_asking():
+    async def run():
+        from fluffy.brain.habits import load_habits
+        from tests.inference.test_habits import HABITS
+
+        loop, fake, clock, events = make(heartbeat_s=1, habits=load_habits(HABITS))
+        fake.scene = SceneState(people=[], lighting="dark", summary="empty")
+        feed_frames(loop, clock)
+        await settle(loop)
+        clock.advance(6)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        fake.scene = SceneState(
+            people=[PersonState(posture="walking", activity="arriving")],
+            lighting="dark",
+            summary="walked in",
+        )
+        clock.advance(1)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        calls = [event for event in events if event["type"] == "tool.call" and event["tool"] == "dim_lights"]
+        assert calls
+        assert calls[-1]["args"]["luminosity"] == 80
+        assert calls[-1]["why"] == "habit: lights on when I walk in"
+        assert any(event["type"] == "think" and event["note"].startswith("habit applies:") for event in events)
+        assert not any(event["type"] == "ask" for event in events)
 
     asyncio.run(run())
 

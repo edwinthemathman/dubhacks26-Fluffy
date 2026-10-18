@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response, StreamingResponse
 
+from fluffy.brain.habits import load_habits
 from fluffy.live.loop import LiveLoop, PerceptronPerceiver
 from fluffy.profile import load_profiles
 from fluffy.voice.elevenlabs import SAFETY_LINES, ElevenLabsVoice
@@ -77,7 +78,14 @@ def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
                 raise RuntimeError("PERCEPTRON_API_KEY is not set (put it in .env).")
             client = AsyncClient(api_key=key, provider="perceptron")
             profiles = load_profiles(ROOT / "config" / "profiles")
-            live = LiveLoop(PerceptronPerceiver(client), profiles, profile_id="blind", emit=hub.emit)
+            habits = load_habits(ROOT / "config" / "habits.toml")
+            live = LiveLoop(
+                PerceptronPerceiver(client),
+                profiles,
+                profile_id="blind",
+                emit=hub.emit,
+                habits=habits,
+            )
             voice = ElevenLabsVoice.from_env()
             await voice.pregenerate(SAFETY_LINES, (1.0, 0.85))
         state["loop"] = live
