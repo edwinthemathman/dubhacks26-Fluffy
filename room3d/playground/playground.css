@@ -1,0 +1,63 @@
+:root {
+  color: #0d2744;
+  background: #f3f7fc;
+  font-family: Nunito, "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 16px;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+.lede { margin: 0 0 16px; color: #3e5674; }
+
+.stage {
+  height: 440px;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid #d3e3f4;
+  background: #fff;
+}
+
+.heard {
+  min-height: 1.4em;
+  margin: 10px 0 0;
+  font-weight: 800;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+button, .link {
+  border: 2px solid #d3e3f4;
+  background: #fff;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-weight: 800;
+}
+
+button.primary { background: #0c4dad; color: #fff; border-color: #0c4dad; }
+button.ask { border-color: #1a6fe8; }
+button.bad { border-color: #d64545; color: #9c2b2b; }
+button[aria-pressed="true"] { border-color: #0c4dad; background: #e7f1fd; }
+
+.group { margin-top: 16px; }
+.group h2 {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #3e5674;
+}
