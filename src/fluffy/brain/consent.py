@@ -292,19 +292,23 @@ def _apply_preagreed(plan: Plan, profile: Profile) -> Plan:
 
 
 def _question_for(plan: Plan) -> str:
+    written = _written_question(plan.intent)
+    if written:
+        return written
     phrases = []
+    spoken = f"{plan.intent} {plan.reasoning_summary}"
     for action in sorted(plan.actions, key=lambda item: _ACTION_ORDER.get(item.tool, 50)):
-        phrase = _phrase_action(action)
+        phrase = _phrase_action(action, spoken)
         if phrase and phrase not in phrases:
             phrases.append(phrase)
     if not phrases:
         return "Should I do that?"
     if len(phrases) == 1:
-        return f"Do you want me to {phrases[0]}?"
+        return f"Should I {phrases[0]}?"
     if len(phrases) == 2:
-        return f"Do you want me to {phrases[0]} and {phrases[1]}?"
+        return f"Should I {phrases[0]} and {phrases[1]}?"
     head = ", ".join(phrases[:-1])
-    return f"Do you want me to {head}, and {phrases[-1]}?"
+    return f"Should I {head}, and {phrases[-1]}?"
 
 
 _ACTION_ORDER = {
@@ -319,7 +323,7 @@ _ACTION_ORDER = {
 }
 
 
-def _phrase_action(action) -> str | None:
+def _phrase_action(action, spoken: str = "") -> str | None:
     tool = action.tool
     args = action.args
     if tool == "dim_lights":
@@ -338,8 +342,11 @@ def _phrase_action(action) -> str | None:
         return "close the blinds"
     if tool == "play_sound":
         sound = str(args.get("sound", "music")).replace("_", " ")
+        named = _named_playback(spoken)
+        if named:
+            return f"put on some {named}"
         if sound == "music":
-            return "put on music"
+            return "put on some music"
         return f"play {sound}"
     if tool == "stop_sound":
         return "stop the sound"
@@ -349,6 +356,32 @@ def _phrase_action(action) -> str | None:
         return "show a caption"
     if tool == "announce":
         return "say that out loud"
+    return None
+
+
+def _written_question(text: str) -> str | None:
+    """The question the model wrote, when it followed the examples."""
+    for line in text.splitlines():
+        line = line.strip().strip('"')
+        lowered = line.lower()
+        if not line.endswith("?"):
+            continue
+        if lowered.startswith("should i ") or lowered.startswith("do you want"):
+            return line
+    return None
+
+
+def _named_playback(text: str) -> str | None:
+    """A specific thing they asked to hear, such as Spotify, instead of 'music'."""
+    lowered = text.lower()
+    for needle, pretty in (
+        ("spotify", "Spotify"),
+        ("apple music", "Apple Music"),
+        ("youtube music", "YouTube Music"),
+        ("pandora", "Pandora"),
+    ):
+        if needle in lowered:
+            return pretty
     return None
 
 

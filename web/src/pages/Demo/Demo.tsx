@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { TopBar } from "../../components/shared/TopBar";
 import { ProfileBadge } from "../../components/shared/ProfileBadge";
 import { ToolPill } from "../../components/shared/ToolPill";
+import { useChromeSpeech } from "../../live/useChromeSpeech";
 import { useLiveCapture } from "../../live/useLiveCapture";
 import { useVoice } from "../../live/useVoice";
 import { deriveAvatar, useFluffyStream } from "../../stream/FluffyStream";
@@ -20,6 +21,7 @@ export function Demo() {
   const { snapshot, scene, send, replay } = useFluffyStream();
   const speaking = useRef(false);
   const live = useLiveCapture({ isSpeaking: () => speaking.current });
+  useChromeSpeech(live.status === "live" && !scene, send, () => speaking.current);
   const voice = useVoice({
     enabled: live.status === "live",
     sayId: snapshot.speechId,

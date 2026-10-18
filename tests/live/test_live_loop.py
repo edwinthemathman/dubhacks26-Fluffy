@@ -236,6 +236,56 @@ def test_a_loud_window_keeps_its_audio():
     asyncio.run(run())
 
 
+def test_quiet_speech_still_goes_out_with_the_frames():
+    async def run():
+        loop, fake, clock, _ = make(heartbeat_s=999)
+        loop.last_watch = clock.now().timestamp()
+        feed_frames(loop, clock, 1.0, motion=0.2)
+        loop.on_audio(struct.pack("<8000h", *([200] * 8000)))
+        clock.advance(0.6)
+        await settle(loop)
+        assert fake.windows and fake.windows[-1].wav is not None
+    asyncio.run(run())
+
+
+def test_words_heard_in_the_scene_become_a_spoken_decision():
+    async def run():
+        loop, fake, clock, _ = make()
+        fake.scene = SceneState(
+            people=[PersonState(posture="sitting", location_surface="sofa")],
+            sounds=["speech"],
+            said="play some music",
+            summary="asking for music",
+        )
+        feed_frames(loop, clock)
+        loop.on_audio(struct.pack("<8000h", *([2000] * 8000)))
+        await settle(loop, rounds=4)
+        assert any(call["utterance"] == "play some music" for call in fake.decide_calls)
+    asyncio.run(run())
+
+
+def test_glare_has_to_stay_before_it_asks():
+    async def run():
+        loop, fake, clock, events = make(heartbeat_s=1, glare_hold_s=8)
+        fake.scene = SceneState(
+            people=[PersonState(gesture="shielding_eyes", posture="standing")],
+            lighting="bright",
+            summary="hand over their eyes",
+        )
+        feed_frames(loop, clock)
+        await settle(loop)
+        sees = [event for event in events if event["type"] == "sense.see"]
+        assert sees and "cue: glare" not in sees[-1]["chips"]
+        assert fake.decide_calls == []
+        clock.advance(9)
+        feed_frames(loop, clock, 0.5)
+        await settle(loop)
+        assert any(event["type"] == "sense.see" and "cue: glare" in event["chips"] for event in events)
+        assert fake.decide_calls and "glare" in fake.decide_calls[-1]["cues"]
+
+    asyncio.run(run())
+
+
 def test_a_repeated_fall_is_latched():
     async def run():
         loop, fake, clock, events = make(heartbeat_s=1)
@@ -252,6 +302,25 @@ def test_a_repeated_fall_is_latched():
         assert len(checkins) == 1
         assert len(fake.decide_calls) == 1
         assert len([e for e in events if e["type"] == "ask"]) == 1
+    asyncio.run(run())
+
+
+def test_chrome_speech_is_the_utterance_the_decision_hears():
+    async def run():
+        loop, fake, clock, events = make()
+        feed_frames(loop, clock)
+        loop.last_watch = clock.now().timestamp() + 999
+        await loop.on_client({"type": "speech", "text": "it's getting late, put on some music"})
+        await settle(loop)
+        assert any(event["type"] == "sense.hear" and event["text"] == "it's getting late, put on some music" for event in events)
+        assert fake.decide_calls[-1]["utterance"] == "it's getting late, put on some music"
+        # The same words on the next scene read must not start a second turn.
+        fake.scene = SceneState(summary="sitting", said="it's getting late, put on some music")
+        clock.advance(1)
+        loop.last_watch = 0
+        await settle(loop)
+        assert len(fake.decide_calls) == 1
+
     asyncio.run(run())
 
 

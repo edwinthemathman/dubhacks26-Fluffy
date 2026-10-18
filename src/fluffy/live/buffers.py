@@ -117,6 +117,14 @@ class AudioBuffer:
         return self.samples[lo:hi].tobytes()
 
 
+def pad_pcm(pcm: bytes, seconds: float = 0.5, rate: int = SAMPLE_RATE) -> bytes:
+    """Silence-pad a short clip. The decoder reports zero frames under about 0.5 s."""
+    need = int(seconds * rate) * 2
+    if len(pcm) >= need:
+        return pcm
+    return pcm + bytes(need - len(pcm))
+
+
 def to_wav(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as handle:
@@ -137,7 +145,9 @@ class SpeechGate:
     def __init__(
         self,
         rate: int = SAMPLE_RATE,
-        threshold: float = 700.0,
+        # 250 is quiet speech on a laptop mic. 700 only caught peaks, so a sentence
+        # never became one burst and the short spikes could not be decoded.
+        threshold: float = 250.0,
         hang_s: float = 0.6,
         min_s: float = 0.15,
         max_s: float = 12.0,

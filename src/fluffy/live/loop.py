@@ -26,7 +26,7 @@ from fluffy.brain.decide import _plan_from_devices, complete_paired_request
 from fluffy.brain.safety import CHECKIN_TEXT, SafetyEffect, SafetyMachine
 from fluffy.clock import Clock
 from fluffy.ids import IdFactory
-from fluffy.live.buffers import AudioBuffer, FrameBuffer, SpeechGate, to_wav
+from fluffy.live.buffers import AudioBuffer, FrameBuffer, SpeechGate, pad_pcm, to_wav
 from fluffy.live.home import HomeState
 from fluffy.live.perceive import Decision, Read, Window
 from fluffy.live.voice_policy import VoicePolicy
@@ -56,6 +56,11 @@ class LiveSettings:
     decide_effort: str = "low"
     stale_s: float = 10.0
     latch_s: float = 30.0
+    # Below this the mic is silence, so a sound label would be a guess from the picture.
+    # Quiet speech sits under the burst gate and still has to ride with the frames.
+    audible_floor: float = 80.0
+    # A single squint or glasses reflection used to become glare immediately.
+    glare_hold_s: float = 8.0
     budget_per_min: int = 40
     caption_s: float = 15.0
 
@@ -174,6 +179,9 @@ class LiveLoop:
         self.paused = False
         self.epoch = 0
         self.mute_until = 0.0
+        self.glare_since: float | None = None
+        self.last_said = ""
+        self.speech_at = 0.0
         self.says: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.timers: set[asyncio.Task] = set()
 
@@ -212,6 +220,8 @@ class LiveLoop:
             text = str(message.get("text", "")).strip()
             if text and not await self._answer_text(text, by="typing"):
                 self._request(DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text))
+        elif kind == "speech":
+            await self._heard_speech(str(message.get("text", "")))
         elif kind == "profile.set" and message.get("profile") in self.profiles:
             self.profile = self.profiles[message["profile"]]
             self.safety.profile = self.profile
@@ -245,6 +255,9 @@ class LiveLoop:
         self.safety_turn = None
         self.latched.clear()
         self.active_cues.clear()
+        self.glare_since = None
+        self.last_said = ""
+        self.speech_at = 0.0
         self.pending = None
         self.emit({"type": "safety", "state": "ok"})
 
@@ -314,6 +327,7 @@ class LiveLoop:
         self.frames.clear()
         self.audio.clear()
         self.gate = SpeechGate()
+        self.glare_since = None
         self.motion_started = None
         self.last_motion = None
         self.pending = None
@@ -337,9 +351,10 @@ class LiveLoop:
         frames = self.frames.window(span, count)
         if len(frames) < 2:
             return None
-        # A quiet mic still fills the buffer. Attaching it would make every scene
-        # read wait on a transcript, and the picture would invent sound labels.
-        if wav is None and self.audio.loudest(span) >= self.gate.threshold:
+        # Silence stays frames-only, so the picture cannot invent a thud.
+        # Anything louder, including quiet speech, goes out with the frames
+        # the way a recording's soundtrack does.
+        if wav is None and self.audio.loudest(span) >= self.s.audible_floor:
             pcm = self.audio.last(span)
             wav = to_wav(pcm) if len(pcm) >= self.audio.rate else None  # at least 0.5 s
         return Window(frames=frames, wav=wav, seconds=self.frames.span_of(frames), ended_at=self.now())
@@ -356,18 +371,47 @@ class LiveLoop:
             log.warning("scene read failed: %s", read.error)
             return
         scene: SceneState = read.value
-        if window.wav is None or self.audio.loudest(self.s.watch_span_s) < self.gate.threshold:
-            # The window was silent, so any sound label is a guess from the picture
-            # (a bouncing ball read as a thud). Sounds come from the hear lane instead.
-            scene = scene.model_copy(update={"sounds": ["none"]})
+        if window.wav is None or self.audio.loudest(self.s.watch_span_s) < self.s.audible_floor:
+            # The window was silent, so any sound label or quote is a guess from the picture
+            # (a bouncing ball read as a thud). Real sounds come from the mic.
+            scene = scene.model_copy(update={"sounds": ["none"], "said": ""})
         self.scene = scene
-        cues = derive(scene)
+        cues = self._held_cues(derive(scene))
         self.emit({"type": "sense.see", "thumb": self._thumb(), "chips": _chips(scene, cues)})
         cleared = self.active_cues - cues
         for cue in cleared:
             self.latched.pop(cue, None)  # it cleared, so it may fire again later
         self.active_cues = cues
         self._on_cues(cues, trigger=" -> ".join(scene.timeline[-2:]) or scene.summary)
+        said = scene.said.strip()
+        if not said:
+            if not self._recent_speech():
+                self.last_said = ""
+        elif said != self.last_said and not self._recent_speech():
+            # Same path as a recording: the words on the scene read are the transcript.
+            self.last_said = said
+            self._request(
+                DecideRequest(
+                    "spoken",
+                    said[:40],
+                    set(self.active_cues),
+                    self.now(),
+                    wav=window.wav,
+                    utterance=said,
+                )
+            )
+
+    def _held_cues(self, cues: set[str]) -> set[str]:
+        """Glare has to stay in view. One squint used to ask immediately."""
+        now = self.now()
+        if "glare" not in cues:
+            self.glare_since = None
+            return cues
+        if self.glare_since is None:
+            self.glare_since = now
+        if now - self.glare_since < self.s.glare_hold_s:
+            return set(cues) - {"glare"}
+        return cues
 
     def _on_cues(self, cues: set[str], *, trigger: str, wav: bytes | None = None) -> None:
         now = self.now()
@@ -400,7 +444,8 @@ class LiveLoop:
             start, end = nxt
 
     async def _hear_span(self, start: int, end: int, epoch: int) -> None:
-        wav = to_wav(self.audio.between(start, end))
+        # Pad under half a second. A shorter clip makes the decoder report zero frames.
+        wav = to_wav(pad_pcm(self.audio.between(start, end)))
         question = self._open_question()
         if question:
             read = await self.perceiver.answer(wav, question)
@@ -433,21 +478,45 @@ class LiveLoop:
         self.emit({"type": "sense.hear", "text": sound.heard, "sound": notable})
         if "help" in labels:
             self._safety_effects(self.safety.on_event("distress_call"), trigger="call for help")
-        cues = derive(apply_sound_read(self.scene, sound))
+        cues = self._held_cues(derive(apply_sound_read(self.scene, sound)))
         before = dict(self.latched)
         self._on_cues(cues, trigger=sound.heard or ", ".join(sorted(labels)), wav=wav)
-        fired = self.latched != before
-        if not fired and "speech" in labels:
-            self._request(
-                DecideRequest(
-                    "spoken",
-                    (sound.heard or "speech")[:40],
-                    set(self.active_cues),
-                    self.now(),
-                    wav=wav,
-                    utterance=f"(speech in the attached audio) {sound.heard}",
-                )
+        if "speech" not in labels or self._recent_speech():
+            return
+        # Chrome already supplied the words. This call is the fallback.
+        spoken = await self.perceiver.transcript(wav, self.profile)
+        if not self._live(epoch):
+            return
+        text = spoken.value.transcript.strip() if isinstance(spoken.value, TranscriptRead) else ""
+        if not text and "speech" not in labels:
+            return
+        utterance = text or sound.heard or "speech"
+        self.last_said = utterance
+        self._request(
+            DecideRequest(
+                "spoken",
+                utterance[:40],
+                set(self.active_cues),
+                self.now(),
+                wav=wav,
+                utterance=utterance,
             )
+        )
+
+    async def _heard_speech(self, text: str) -> None:
+        """Chrome's live transcript. The words are the decision, the way a typed line is."""
+        text = text.strip()
+        if not text:
+            return
+        self.speech_at = self.now()
+        self.last_said = text
+        self.emit({"type": "sense.hear", "text": text})
+        if await self._answer_text(text, by="voice"):
+            return
+        self._request(DecideRequest("spoken", text[:40], set(self.active_cues), self.now(), utterance=text))
+
+    def _recent_speech(self) -> bool:
+        return self.now() - self.speech_at < 8
 
     def _open_question(self) -> str | None:
         if self.safety.phase in {"checkin", "checkin_repeat"}:

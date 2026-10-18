@@ -58,10 +58,23 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
     const token = ++generation.current;
     setStatus("starting");
     setError(null);
+    // Open the audio graph inside the click. Creating it after getUserMedia
+    // leaves the context suspended, so the mic worklet never runs.
+    const audio = new AudioContext();
+    parts.current.audio = audio;
+    void audio.resume();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        // Noise suppression eats quiet speech and thuds. Recordings keep that
+        // soundtrack; the live mic should too. Echo cancellation still stops
+        // Fluffy from hearing its own speaker.
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: true,
+        },
       });
       if (generation.current !== token) {
         stream.getTracks().forEach((track) => track.stop());
@@ -180,8 +193,9 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
 
     async function startAudio(stream: MediaStream, socket: WebSocket, token: number) {
       if (stream.getAudioTracks().length === 0) return;
-      const audio = new AudioContext();
+      const audio = parts.current.audio ?? new AudioContext();
       parts.current.audio = audio;
+      if (audio.state !== "running") await audio.resume();
       await audio.audioWorklet.addModule(new URL("./pcm-worklet.js", import.meta.url));
       if (generation.current !== token) {
         void audio.close();
@@ -191,9 +205,9 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
       const node = new AudioWorkletNode(audio, "pcm-chunker");
       node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
         if (generation.current !== token || socket.readyState !== WebSocket.OPEN) return;
-        // Half-duplex: don't send Fluffy's own voice back to Fluffy.
+        // Half-duplex only while our own line is playing. The browser's
+        // speechSynthesis.speaking flag can stick on and mute the mic for good.
         if (isSpeaking.current?.()) return;
-        if ("speechSynthesis" in window && window.speechSynthesis.speaking) return;
         socket.send(join(new Uint8Array([2]).buffer, event.data));
       };
       source.connect(node);

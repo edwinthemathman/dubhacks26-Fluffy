@@ -92,10 +92,8 @@ async def read_scene(
     profile: Profile | None = None,
 ) -> Read:
     started = time.perf_counter()
-    if not transcript and window.wav:
-        spoken = await read_transcript(client, window.wav, profile)
-        if isinstance(spoken.value, TranscriptRead):
-            transcript = spoken.value.transcript.strip()
+    # The frames and the wav go out together, as a recording's picture and
+    # soundtrack do. A transcript call here would add a second reasoning pass.
     try:
         completion = await client.chat.completions.create(
             model=MODEL,
@@ -272,11 +270,11 @@ async def decide(
 ) -> Decision:
     """The decision call with tools. Only device calls from the last round count."""
     started = time.perf_counter()
-    transcript = ""
-    if window.wav:
-        spoken = await read_transcript(client, window.wav, profile)
-        if isinstance(spoken.value, TranscriptRead):
-            transcript = spoken.value.transcript.strip()
+    # Words already heard. The decision call itself has the wav, so it does not
+    # wait on another reasoning pass to transcribe them again.
+    transcript = scene.said.strip() if scene is not None and scene.said.strip() else ""
+    if not transcript and utterance.strip():
+        transcript = utterance.strip()
     user_text = (
         f"{LIVE_NOTE.format(seconds=window.seconds)}\n"
         f"{_user_text(profile, utterance, scene, cues, transcript=transcript, asked=asked, answer=answer)}"

@@ -91,16 +91,25 @@ function speakBuiltin(
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = rate;
+  let finished = false;
+  let started = false;
+  let cap = 0;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    window.clearTimeout(cap);
+    speakingRef.current = false;
+    if (started) send({ type: "tts.end" });
+  };
   utterance.onstart = () => {
     if (stopped()) return;
+    started = true;
     speakingRef.current = true;
     send({ type: "tts.start" });
   };
-  const done = () => {
-    speakingRef.current = false;
-    send({ type: "tts.end" });
-  };
   utterance.onend = done;
   utterance.onerror = done;
+  // onend sometimes never fires, which used to leave the mic muted.
+  cap = window.setTimeout(done, Math.min(12000, 1500 + text.length * 70));
   window.speechSynthesis.speak(utterance);
 }

@@ -202,8 +202,91 @@ def test_late_and_music_asks_for_both():
     assert plan is not None
     assert [action.tool for action in plan.actions] == ["play_sound", "dim_lights"]
     update = ConsentManager(clock).consider(plan, profiles()["blind"], transcript_clear=False)
-    assert update.question == "Do you want me to dim the lights and put on music?"
+    assert update.question == "Should I dim the lights and put on some music?"
     assert update.release is False
+
+
+def test_spotify_question_names_what_they_mentioned():
+    clock = FrozenClock()
+    plan = _run(
+        ScriptedProvider([]),
+        reply_steps=[
+            Completion(
+                tool_calls=[
+                    ToolCall(
+                        "c1",
+                        "dim_lights",
+                        _args(
+                            room="living_room",
+                            luminosity=25,
+                            light="lamp.living_floor",
+                            confidence=0.9,
+                            reason="yawning, dozing off",
+                        ),
+                    ),
+                    ToolCall(
+                        "c2",
+                        "play_sound",
+                        _args(
+                            sound="music",
+                            room="living_room",
+                            volume=40,
+                            confidence=0.9,
+                            reason="listening to Spotify before sleep",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        trigger=Trigger(kind="inferred", room="living_room"),
+    ).plan
+    assert plan is not None
+    update = ConsentManager(clock).consider(plan, profiles()["blind"], transcript_clear=False)
+    assert update.question == "Should I dim the lights and put on some Spotify?"
+
+
+def test_the_model_is_told_to_write_the_question_like_the_examples():
+    from fluffy.brain.decide import system_prompt
+
+    prompt = system_prompt(profiles()["blind"])
+    assert 'Good: "Should I put on some Spotify?"' in prompt
+    assert 'Good: "Should I dim the lights and put on music?"' in prompt
+    assert "yawning, dozing off; listening to Spotify before sleep?" in prompt
+    assert "person says it's getting late and asks for music?" in prompt
+
+
+def test_a_question_the_model_wrote_is_asked_as_written():
+    provider = ScriptedProvider([])
+    result = _run(
+        provider,
+        reply_steps=[
+            Completion(
+                text="Should I put on some Spotify?",
+                tool_calls=[
+                    ToolCall("c1", "play_sound", _args(
+                        sound="music",
+                        room="living_room",
+                        volume=40,
+                        confidence=0.9,
+                        reason="listening to Spotify before sleep",
+                    )),
+                    ToolCall("c2", "dim_lights", _args(
+                        room="living_room",
+                        luminosity=25,
+                        light="lamp.living_floor",
+                        confidence=0.9,
+                        reason="yawning, dozing off",
+                    )),
+                ],
+            )
+        ],
+        trigger=Trigger(kind="inferred", room="living_room"),
+    )
+    assert result.plan is not None
+    update = ConsentManager(FrozenClock()).consider(
+        result.plan, profiles()["blind"], transcript_clear=False
+    )
+    assert update.question == "Should I put on some Spotify?"
 
 
 def test_catalog_rejects_malformed_json():

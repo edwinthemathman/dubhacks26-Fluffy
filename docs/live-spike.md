@@ -28,7 +28,7 @@ These runs used a fake browser streaming a clip into the live server:
 - The safety check-in ("Are you okay?") fires immediately on a fall cue and isn't repeated while the fall stays latched.
 
 ## Two fixes the live runs showed
-1. **Sound labels invented from silence.** A scene read guessed sound labels from the picture (it read "impact" from a bouncing basketball while the audio was silent), which tripped the new "thud and nobody visible" fall rule. A quiet window is sent as frames only, and any sound label on it is dropped, so it also does not pay for a transcript. Real sounds come from the hear lane.
+1. **Sound labels invented from silence.** A scene read guessed sound labels from the picture (it read "impact" from a bouncing basketball while the audio was silent), which tripped the new "thud and nobody visible" fall rule. A silent window is sent as frames only, and any sound label or quote on it is dropped. Audible audio, including quiet speech, goes out with the frames the way a recording's soundtrack does. The words come back on that same read (`said`) instead of a second reasoning pass.
 2. **Empty sound labels.** The sound read often describes the sound ("a doorbell rings") but returns an empty label list. The live loop now falls back to keywords in the description (`labels_from_text`). Short words such as "fall" and "help" have to be whole words, so "falling asleep" or "helpful" is not a fall. The clip demo (`fluffy/demo/analyze.py`) has the same weakness.
 
 ## Running it
@@ -41,10 +41,10 @@ uv run python scripts/live_spike.py --watch --decide   # terminal-only live test
 
 ## How the live loop works (`src/fluffy/live/`)
 - **`useLiveCapture`** (web): sends JPEG frames 4 times a second, plus a motion score and 16 kHz audio, over `/ws/live`. It doesn't send mic audio while text-to-speech is speaking.
-- **Watch lane:** after motion settles (0.5 s), after 3 s of continuous motion, or every 5 s, it runs a scene read on the last 4 s (8 frames, reasoning none).
+- **Watch lane:** after motion settles (0.5 s), after 3 s of continuous motion, or every 5 s, it runs a scene read on the last 4 s (8 frames, reasoning none). When the mic is not silent, that read includes the audio.
 - **Hear lane:** at the end of each burst of sound, it runs a sound read. While a question is open it instead reads a yes, no or help answer. A burst that ends during a read waits, and a newer one replaces it.
 - **Disconnect:** when the last camera socket closes, the loop pauses and drops the buffered frames instead of keeping the last picture.
-- **Decide lane:** a new cue or speech triggers a decision call on the last 6 s plus audio, with tools. A newer trigger replaces a queued one, results older than 10 s are dropped, and a cue is latched for 30 s.
+- **Decide lane:** a new cue or speech triggers one decision call on the last 6 s plus the audio, with tools. It uses the words already heard. A newer trigger replaces a queued one, results older than 10 s are dropped, and a cue is latched for 30 s.
 - **Safety:** a fall or a call for help starts the check-in right away. A model call to `alert_caregiver` also goes through the check-in instead of a second question.
 - **Output:** every step is sent on `/ws/ui` as the web app's existing events, so the Demo and Mind pages show it live.
 

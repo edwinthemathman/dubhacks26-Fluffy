@@ -153,7 +153,8 @@ def system_prompt(profile: Profile) -> str:
             "alarm only costs a question.",
             "- Dozing off, eyes closing, lying back to rest: dim_lights luminosity 10-30, "
             "and set_light_warmth warm.",
-            "- Shielding their eyes or squinting at a light: dim_lights luminosity 30-40 on that light.",
+            "- A hand covering their eyes against a bright lamp, held there: dim_lights "
+            "luminosity 30-40 on that light. A squint, glasses glare, or bright eyes is not enough.",
             "- Room dark, or someone arriving in the dark: dim_lights luminosity 70-100.",
             "- Doorbell, knock, or alarm: flash_lights and show_caption.",
             "- The transcript is a decision, not a hint. Call every tool it asks for, in the same turn: "
@@ -165,6 +166,18 @@ def system_prompt(profile: Profile) -> str:
             "- If you can see something may be wanted but you're unsure what, call ask_user "
             "with one short, friendly question instead of guessing or doing nothing.",
             "- Nothing above, or nothing changed: call no tools and reply with an empty message.",
+            "",
+            "THE QUESTION YOU WRITE",
+            "When you call comfort tools, write the question the person will hear as your reply, "
+            "in the same turn as the tool calls. One short question. Name the action, and use "
+            "the specific words they said.",
+            'Good: "Should I put on some Spotify?"',
+            'Good: "Should I dim the lights and put on music?"',
+            "Bad: a list of what you noticed. These are wrong:",
+            '"yawning, dozing off; listening to Spotify before sleep?"',
+            '"person says it\'s getting late and asks for music?"',
+            "ask_user uses this same shape. The reason field stays a few words about the cue. "
+            "The reply is the question. If you call no tools, leave the reply empty.",
             "",
             "CONSENT IS HANDLED FOR YOU",
             "A tool call is only a proposal. The app asks the person before anything changes, "

@@ -82,6 +82,7 @@ export type ClientMessage =
   | { type: "tts.end" }
   | { type: "mock.play"; scene: string }
   | { type: "typed"; text: string }
+  | { type: "speech"; text: string }
   | { type: "caregiver.ack" };
 
 export type Line =

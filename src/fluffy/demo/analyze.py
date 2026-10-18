@@ -103,6 +103,9 @@ def _analyze_uploaded(
     )
     scene, scene_error, scene_thinking = _read_scene(client, file_id, transcript)
     scene = apply_sound_read(scene, heard)
+    if not transcript and scene is not None and scene.said.strip():
+        transcript = scene.said.strip()
+        trace[-1]["summary"] = transcript
     cues = derive(scene)
     trace.append(
         {
@@ -282,11 +285,12 @@ SOUND_PROMPT = (
 def transcript_prompt(profile: Profile | None) -> str:
     words = ", ".join(profile.vocabulary) if profile and profile.vocabulary else "none"
     return (
-        "Transcribe the speech in this clip. "
-        "transcript is only the words that were said, in order. "
-        "If nobody speaks, transcript is an empty string. "
-        "Do not describe groans, thuds, music, or other sounds that are not words. "
-        "Guess generously when the speech is hard to make out. "
+        "Write down the speech in this clip. Listen to the soundtrack. "
+        "transcript is the words that were said, in order, including names of apps, songs, and people. "
+        "If someone mentions Spotify, a song, or anything else by name, those words belong in the transcript. "
+        "Leave transcript empty only when there is no speech at all. "
+        "Do not describe groans, thuds, or music that has no words. "
+        "Guess the words when speech is hard to make out. "
         "clear is true only when you are confident those are the words. "
         f"Words this person often uses: {words}."
     )
@@ -314,7 +318,10 @@ SCENE_PROMPT = (
     "- activity: sleeping, arriving, leaving, idle, distressed, fallen, or unknown. "
     "fallen if they fell and are still down. distressed if they look hurt, "
     "scared, or in pain. leaving is only a calm, upright walk out of frame.\n"
-    "- gesture: shielding_eyes if they cover or squint away from a light. "
+    "- gesture: shielding_eyes only when a hand covers their eyes, or they turn their "
+    "face sharply away from a lamp and hold it for most of the clip. "
+    "A squint, a blink, glasses reflecting light, bright catchlights in the eyes, "
+    "or looking at a window or screen is none. "
     "attention_target is a device id such as lamp.living_floor, or null.\n"
     "Lying on the floor is not resting. Someone lying still on a sofa or bed "
     "with eyes closed is resting.\n"
@@ -322,6 +329,9 @@ SCENE_PROMPT = (
     "speech, none. pain is a groan, cry, or 'ow' and needs no words. "
     "impact is a thud or crash. help is a call for help, "
     "not 'help me find my keys'.\n"
+    "said: the words spoken, as close as you can get, including app and song names. "
+    "Fill said whenever you hear speech, even if an earlier transcript was empty. "
+    "Leave said empty only when nobody speaks.\n"
     "objects_seen is only for keys, phone, glasses, wallet, pill organizer, "
     "cane, or hearing aids.\n"
     "summary: one sentence on how things are at the end.\n"
@@ -331,7 +341,7 @@ SCENE_PROMPT = (
 
 def scene_prompt(transcript: str = "") -> str:
     """Scene layout. The transcript tells the read what the words were about."""
-    words = transcript.strip() or "(nobody spoke)"
+    words = transcript.strip() or "(not transcribed yet; listen and put the words in said)"
     return (
         f"{SCENE_PROMPT}\n"
         f"Transcript: {words}\n"
@@ -364,7 +374,7 @@ def _transcribe(
                 }
             ],
             response_format=pydantic_format(TranscriptRead, strict=False),
-            reasoning_effort="none",
+            reasoning_effort="low",
             max_completion_tokens=256,
             timeout=REQUEST_TIMEOUT_S,
             vision_config={"enable_audio_in_video": True},
@@ -534,6 +544,9 @@ def _user_text(
             "is a red flag for a fall, not an arrival or someone leaving.",
             "",
             "Decide now from the picture and the transcript together. "
+            'If you call a comfort tool, your reply is the question, such as "Should I put on some Spotify?" '
+            "or \"Should I dim the lights and put on music?\". "
+            "Use the words they said. Do not describe what you saw. "
             "If the transcript asks for one thing or several, call every tool it needs in this turn. "
             "If someone fell, is down on the floor, or looks hurt, or the transcript says they fell, "
             "can't get up, or need help, or there is a thud and the person is out of view or not "

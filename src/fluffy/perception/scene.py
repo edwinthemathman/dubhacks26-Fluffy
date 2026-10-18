@@ -62,6 +62,9 @@ class SceneState(BaseModel):
     people: list[PersonState] = Field(default_factory=list)
     objects_seen: list[ObjectSighting] = Field(default_factory=list)
     sounds: list[SoundLabel] = Field(default_factory=list)
+    # Words spoken in the clip. The scene read fills this when it hears speech,
+    # so a missed transcript call does not leave the words blank.
+    said: str = ""
     text_present: str | None = None
     lighting: Literal["dark", "dim", "normal", "bright"] = "normal"
     summary: str = ""

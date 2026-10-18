@@ -156,7 +156,7 @@ def test_low_confidence_dim_asks():
     )
     assert update.status == "asking"
     assert update.release is False
-    assert update.question == "Do you want me to dim the lights?"
+    assert update.question == "Should I dim the lights?"
 
 
 def test_a_fall_only_asks_to_call_alex():

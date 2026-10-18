@@ -88,7 +88,14 @@ class LookArgs(BaseModel):
 
 
 class AskUserArgs(BaseModel):
-    question: str
+    question: str = Field(
+        description=(
+            "One short question about the action, using the words they said. "
+            'Good: "Should I put on some Spotify?" '
+            'Good: "Should I dim the lights and put on music?" '
+            "Do not describe what you saw."
+        )
+    )
     choices: list[str] | None = None
 
 
@@ -198,7 +205,14 @@ SPECS: dict[str, ToolSpec] = {
         _spec("find_object", "Find an object in memory or in the live scene.", "meta", FindObjectArgs),
         _spec("read_text", "Read text the camera can see.", "meta", ReadTextArgs),
         _spec("look", "Answer a visual question about the current scene.", "meta", LookArgs),
-        _spec("ask_user", "Ask the person a question.", "meta", AskUserArgs),
+        _spec(
+            "ask_user",
+            "Ask one short question about an action, like \"Should I put on some Spotify?\" "
+            "or \"Should I dim the lights and put on music?\". "
+            "Use the words they said. Do not describe what you saw.",
+            "meta",
+            AskUserArgs,
+        ),
         _spec("confirm_plan", "Record a yes or no for a plan that is waiting.", "meta", ConfirmPlanArgs),
     ]
 }
