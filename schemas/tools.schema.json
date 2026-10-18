@@ -1,0 +1,370 @@
+{
+  "schema_version": "2.0",
+  "tools": [
+    {
+      "name": "dim_lights",
+      "action_class": "comfort",
+      "effect_kind": "simulated_state",
+      "summary": "Set lamp brightness. Zero is off.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "luminosity": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Luminosity",
+            "type": "integer"
+          },
+          "light": {
+            "anyOf": [
+              {
+                "enum": [
+                  "lamp.living_floor",
+                  "light.living_ceiling"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Light"
+          }
+        },
+        "required": [
+          "room",
+          "luminosity"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set_light_warmth",
+      "action_class": "comfort",
+      "effect_kind": "simulated_state",
+      "summary": "Set lamp warmth to a fixed color.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "warmth": {
+            "enum": [
+              "warm",
+              "neutral",
+              "cool"
+            ],
+            "title": "Warmth",
+            "type": "string"
+          },
+          "light": {
+            "anyOf": [
+              {
+                "enum": [
+                  "lamp.living_floor",
+                  "light.living_ceiling"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Light"
+          }
+        },
+        "required": [
+          "room",
+          "warmth"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set_blinds",
+      "action_class": "comfort",
+      "effect_kind": "simulated_state",
+      "summary": "Move blinds. Zero is closed.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "position": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "room",
+          "position"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "play_sound",
+      "action_class": "comfort",
+      "effect_kind": "spotify",
+      "summary": "Play a configured media id.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "sound": {
+            "enum": [
+              "arrival_song",
+              "chime",
+              "doorbell"
+            ],
+            "title": "Sound",
+            "type": "string"
+          },
+          "volume": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Volume",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "room",
+          "sound",
+          "volume"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "stop_sound",
+      "action_class": "comfort",
+      "effect_kind": "spotify",
+      "summary": "Pause Spotify and stop local sound.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          }
+        },
+        "required": [
+          "room"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "flash_lights",
+      "action_class": "notify",
+      "effect_kind": "simulated_state",
+      "summary": "Temporary lamp overlay. Does not change brightness.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "color": {
+            "enum": [
+              "blue",
+              "amber",
+              "white"
+            ],
+            "title": "Color",
+            "type": "string"
+          },
+          "pulses": {
+            "maximum": 3,
+            "minimum": 1,
+            "title": "Pulses",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "room",
+          "color",
+          "pulses"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "show_caption",
+      "action_class": "notify",
+      "effect_kind": "simulated_state",
+      "summary": "Silent caption. Does not synthesize speech.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "normal",
+              "high"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "ttl_s": {
+            "default": 10,
+            "maximum": 30,
+            "minimum": 3,
+            "title": "Ttl S",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text",
+          "priority"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "announce",
+      "action_class": "notify",
+      "effect_kind": "browser_audio",
+      "summary": "Caption plus one spoken utterance.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          }
+        },
+        "required": [
+          "text",
+          "room"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "alert_caregiver",
+      "action_class": "safety",
+      "effect_kind": "photon",
+      "summary": "Message the configured trusted contact about an eligible incident.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "incident_id": {
+            "maxLength": 80,
+            "minLength": 4,
+            "pattern": "^inc_[A-Za-z0-9_\\-]+$",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "high"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "incident_id",
+          "severity",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set_volume",
+      "action_class": "comfort",
+      "effect_kind": "spotify",
+      "summary": "Set Spotify device volume after verification.",
+      "enabled": true,
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string",
+            "enum": [
+              "living_room"
+            ]
+          },
+          "volume": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Volume",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "room",
+          "volume"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

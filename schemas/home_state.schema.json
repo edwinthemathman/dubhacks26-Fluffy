@@ -1,0 +1,574 @@
+{
+  "$defs": {
+    "AlertView": {
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "submitting",
+            "accepted",
+            "delivered",
+            "failed",
+            "unknown",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "verification": {
+          "enum": [
+            "state_committed",
+            "playback_confirmed",
+            "provider_accepted",
+            "provider_delivered",
+            "unverified"
+          ],
+          "title": "Verification",
+          "type": "string"
+        },
+        "provider_reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Reference"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "acknowledged": {
+          "default": false,
+          "title": "Acknowledged",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "incident_id",
+        "severity",
+        "message",
+        "status",
+        "verification"
+      ],
+      "title": "AlertView",
+      "type": "object"
+    },
+    "BlindState": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "room": {
+          "title": "Room",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "position": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "room",
+        "label",
+        "position"
+      ],
+      "title": "BlindState",
+      "type": "object"
+    },
+    "Caption": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "priority": {
+          "enum": [
+            "normal",
+            "high"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "resolved": {
+          "default": false,
+          "title": "Resolved",
+          "type": "boolean"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "speak": {
+          "default": false,
+          "title": "Speak",
+          "type": "boolean"
+        },
+        "audio_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audio Url"
+        },
+        "playback": {
+          "default": "none",
+          "enum": [
+            "none",
+            "generated",
+            "started",
+            "ended",
+            "failed",
+            "blocked"
+          ],
+          "title": "Playback",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "priority",
+        "created_at",
+        "source"
+      ],
+      "title": "Caption",
+      "type": "object"
+    },
+    "FlashOverlay": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "room": {
+          "title": "Room",
+          "type": "string"
+        },
+        "light_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Light Ids",
+          "type": "array"
+        },
+        "color": {
+          "enum": [
+            "blue",
+            "amber",
+            "white"
+          ],
+          "title": "Color",
+          "type": "string"
+        },
+        "pulses": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Pulses",
+          "type": "integer"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "ends_at": {
+          "format": "date-time",
+          "title": "Ends At",
+          "type": "string"
+        },
+        "on_ms": {
+          "default": 600,
+          "title": "On Ms",
+          "type": "integer"
+        },
+        "off_ms": {
+          "default": 600,
+          "title": "Off Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "room",
+        "light_ids",
+        "color",
+        "pulses",
+        "started_at",
+        "ends_at"
+      ],
+      "title": "FlashOverlay",
+      "type": "object"
+    },
+    "IncidentView": {
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "phase": {
+          "title": "Phase",
+          "type": "string"
+        },
+        "room": {
+          "title": "Room",
+          "type": "string"
+        },
+        "audio_failed": {
+          "default": false,
+          "title": "Audio Failed",
+          "type": "boolean"
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question Id"
+        },
+        "question_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question Text"
+        }
+      },
+      "required": [
+        "incident_id",
+        "phase",
+        "room"
+      ],
+      "title": "IncidentView",
+      "type": "object"
+    },
+    "LightState": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "room": {
+          "title": "Room",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "luminosity": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Luminosity",
+          "type": "integer"
+        },
+        "warmth": {
+          "enum": [
+            "warm",
+            "neutral",
+            "cool"
+          ],
+          "title": "Warmth",
+          "type": "string"
+        },
+        "color": {
+          "title": "Color",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "room",
+        "label",
+        "luminosity",
+        "warmth",
+        "color"
+      ],
+      "title": "LightState",
+      "type": "object"
+    },
+    "MediaState": {
+      "additionalProperties": false,
+      "properties": {
+        "room": {
+          "title": "Room",
+          "type": "string"
+        },
+        "provider": {
+          "default": "none",
+          "enum": [
+            "none",
+            "spotify",
+            "local"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "sound_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sound Id"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Volume"
+        },
+        "playback": {
+          "default": "idle",
+          "enum": [
+            "idle",
+            "requesting",
+            "playing",
+            "paused",
+            "error"
+          ],
+          "title": "Playback",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "verification": {
+          "anyOf": [
+            {
+              "enum": [
+                "state_committed",
+                "playback_confirmed",
+                "provider_accepted",
+                "provider_delivered",
+                "unverified"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verification"
+        },
+        "simulated": {
+          "default": true,
+          "title": "Simulated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "room"
+      ],
+      "title": "MediaState",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "title": "Revision",
+      "type": "integer"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "rooms": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Rooms",
+      "type": "array"
+    },
+    "lights": {
+      "items": {
+        "$ref": "#/$defs/LightState"
+      },
+      "title": "Lights",
+      "type": "array"
+    },
+    "blinds": {
+      "items": {
+        "$ref": "#/$defs/BlindState"
+      },
+      "title": "Blinds",
+      "type": "array"
+    },
+    "media": {
+      "items": {
+        "$ref": "#/$defs/MediaState"
+      },
+      "title": "Media",
+      "type": "array"
+    },
+    "flashes": {
+      "items": {
+        "$ref": "#/$defs/FlashOverlay"
+      },
+      "title": "Flashes",
+      "type": "array"
+    },
+    "captions": {
+      "items": {
+        "$ref": "#/$defs/Caption"
+      },
+      "title": "Captions",
+      "type": "array"
+    },
+    "alerts": {
+      "items": {
+        "$ref": "#/$defs/AlertView"
+      },
+      "title": "Alerts",
+      "type": "array"
+    },
+    "incident": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IncidentView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "revision",
+    "updated_at",
+    "rooms",
+    "lights",
+    "blinds",
+    "media",
+    "flashes",
+    "captions",
+    "alerts"
+  ],
+  "title": "HomeState",
+  "type": "object"
+}

@@ -1,0 +1,2 @@
+[contacts]
+alex = { name = "Alex", role = "caregiver", handle = "$PHOTON_CAREGIVER_HANDLE" }

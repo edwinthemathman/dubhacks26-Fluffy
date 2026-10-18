@@ -1,31 +1,41 @@
-"""Clocks for plan expiry and mock-home timers."""
+"""Clock abstraction so tests can freeze time."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Protocol
 
 
-class Clock(Protocol):
-    def now(self) -> datetime:
-        """Return the current timezone-aware time."""
-
-
-class SystemClock:
+class Clock:
     def now(self) -> datetime:
         return datetime.now(timezone.utc)
 
+    async def sleep(self, seconds: float) -> None:
+        import asyncio
 
-class FrozenClock:
-    """A clock that moves only when tests advance it."""
+        await asyncio.sleep(seconds)
 
-    def __init__(self, now: datetime | None = None) -> None:
-        self._now = now or datetime(2026, 10, 18, 22, 41, 5, tzinfo=timezone.utc)
-        if self._now.tzinfo is None:
-            self._now = self._now.replace(tzinfo=timezone.utc)
+
+class SystemClock(Clock):
+    """Wall clock. Kept as a name inference and older tests already use."""
+
+
+class FakeClock(Clock):
+    def __init__(self, start: datetime | None = None, now: datetime | None = None) -> None:
+        chosen = start or now or datetime(2026, 10, 18, 1, 0, tzinfo=timezone.utc)
+        if chosen.tzinfo is None:
+            chosen = chosen.replace(tzinfo=timezone.utc)
+        self._now = chosen
 
     def now(self) -> datetime:
         return self._now
 
-    def advance(self, seconds: float) -> None:
+    def advance(self, seconds: float) -> datetime:
         self._now = self._now + timedelta(seconds=seconds)
+        return self._now
+
+    async def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+
+
+class FrozenClock(FakeClock):
+    """Name used by the inference tests. Same behavior as FakeClock."""

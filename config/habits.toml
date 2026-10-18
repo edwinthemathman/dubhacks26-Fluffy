@@ -1,0 +1,23 @@
+[[habit]]
+id = "lights_on_when_i_walk_in"
+said = "When I walk into the room, turn the lights on."
+when = "entered_room"
+only_if = { lighting = ["dark", "dim", "normal"] }
+actions = [{ tool = "dim_lights", args = { room = "living_room", luminosity = 80 } }]
+min_confidence = 0.5
+cooldown_s = 120
+
+[[habit]]
+id = "lights_off_when_i_leave"
+said = "When I leave, turn the lights off."
+when = "left_room"
+actions = [{ tool = "dim_lights", args = { room = "living_room", luminosity = 0 } }]
+
+[[habit]]
+id = "wind_down_when_dozing"
+said = "If I doze off on the sofa, dim the lights and make them warm."
+when = "falling_asleep"
+actions = [
+  { tool = "dim_lights", args = { room = "living_room", luminosity = 20 } },
+  { tool = "set_light_warmth", args = { room = "living_room", warmth = "warm" } },
+]

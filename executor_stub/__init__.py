@@ -1,1 +1,1 @@
-"""Fixed-rule executor. It approves or rejects plans and applies tools."""
+"""Deterministic executor. It validates harness authorization and dispatches tools."""

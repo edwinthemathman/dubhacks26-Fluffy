@@ -1,0 +1,70 @@
+.landing {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px 36px;
+  background:
+    radial-gradient(ellipse at 50% 18%, var(--bg-glow), transparent 58%),
+    var(--bg);
+  position: relative;
+}
+.theme { position: absolute; top: 16px; right: 16px; }
+.kicker {
+  margin: 0 0 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--blue);
+}
+h1 {
+  margin: 12px 0 0;
+  font-size: clamp(3.2rem, 7vw, 5rem);
+  letter-spacing: -0.045em;
+  line-height: 0.95;
+}
+.tag {
+  margin: 10px 0 22px;
+  font-size: 1.25rem;
+  color: var(--muted);
+  max-width: 28rem;
+}
+.chips {
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0;
+  margin: 0 0 28px;
+  width: min(520px, 100%);
+}
+.chips a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+.chips svg { color: var(--blue-bright); }
+.enter { text-decoration: none; min-width: 180px; }
+.mind {
+  margin-top: 16px;
+  font-weight: 800;
+}
+.note {
+  margin-top: 28px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+@media (max-width: 640px) {
+  .chips { grid-template-columns: 1fr; }
+}

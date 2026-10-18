@@ -1,0 +1,146 @@
+{
+  "$defs": {
+    "ActionProposal": {
+      "additionalProperties": false,
+      "description": "One validated tool call. Evidence ids point at harness observations.",
+      "properties": {
+        "action_id": {
+          "pattern": "^act_[A-Za-z0-9_\\-]{4,64}$",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "tool": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Tool",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "action_id",
+        "tool",
+        "args",
+        "evidence_ids"
+      ],
+      "title": "ActionProposal",
+      "type": "object"
+    },
+    "Trigger": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "sound",
+            "speech",
+            "vision",
+            "safety",
+            "developer"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "event": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event"
+        },
+        "room": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Room"
+        },
+        "utterance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Utterance"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Trigger",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Inference-facing submission. Callers cannot attach authorization.",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "intent": {
+      "maxLength": 240,
+      "minLength": 1,
+      "title": "Intent",
+      "type": "string"
+    },
+    "trigger": {
+      "$ref": "#/$defs/Trigger"
+    },
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/ActionProposal"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Actions",
+      "type": "array"
+    },
+    "reasoning_summary": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Reasoning Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "intent",
+    "trigger",
+    "actions",
+    "reasoning_summary"
+  ],
+  "title": "PlanSubmission",
+  "type": "object"
+}

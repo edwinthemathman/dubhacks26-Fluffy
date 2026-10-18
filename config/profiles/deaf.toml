@@ -1,0 +1,30 @@
+id = "deaf"
+display_name = "Deaf or hard of hearing"
+needs = ["captions", "light"]
+vocabulary = ["Fluffy", "doorbell", "yes", "no", "caption"]
+
+[output]
+speech = false
+captions = true
+speech_rate = 1.0
+light_cues = true
+audio_only_forbidden = true
+
+[input]
+voice = false
+typing = true
+buttons = true
+nod = true
+pointing = false
+
+[questions]
+confirm_back = "low_confidence"
+style = "combined"
+repeat_once = false
+repeat_after_s = 0
+
+[agreements]
+notify = true
+safety = true
+caregiver = "Alex"
+person_name = "Sam"

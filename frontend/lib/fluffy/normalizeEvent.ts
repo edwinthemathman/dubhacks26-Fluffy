@@ -24,7 +24,7 @@ export type NormalizeContext = { now: number };
 
 /** One backend message becomes zero or more canonical events. Invalid shapes are dropped. */
 export function normalizeEvent(raw: unknown, ctx: NormalizeContext): CanonicalEvent[] {
-  const event = asRecord(raw);
+  const event = unwrapEnvelope(raw);
   if (!event) return [];
   const type = asString(event.type);
   if (!type) return [];
@@ -34,8 +34,30 @@ export function normalizeEvent(raw: unknown, ctx: NormalizeContext): CanonicalEv
   return body.map((item) => ({ ...meta, ...item }));
 }
 
+function unwrapEnvelope(raw: unknown): Record<string, unknown> | null {
+  const event = asRecord(raw);
+  if (!event) return null;
+  const payload = asRecord(event.payload);
+  const type = asString(event.type);
+  const enveloped = payload != null && type != null && (event.event_id != null || event.sequence != null);
+  if (!enveloped || !type || !payload) return event;
+  const flat: Record<string, unknown> = {
+    ...payload,
+    type,
+    event_id: event.event_id,
+    session_id: event.session_id ?? payload.session_id,
+    sequence: event.sequence,
+    timestamp: event.timestamp,
+  };
+  const nested = asRecord(payload.result);
+  if (nested && (type === "action.result" || type === "plan.result")) {
+    return { ...flat, ...nested, type };
+  }
+  return flat;
+}
+
 function parse(type: string, event: Record<string, unknown>, ctx: NormalizeContext): CanonicalEvent[] | null {
-  if (type === "state.snapshot" || type === "home.state" || type === "snapshot") {
+  if (type === "state.snapshot" || type === "home.state" || type === "home.snapshot" || type === "snapshot") {
     const patch = parseHomePayload(event.state ?? event.home ?? event, ctx.now);
     if (!patch) return null;
     const revision = finiteNumber(event.revision);
@@ -58,7 +80,8 @@ function parse(type: string, event: Record<string, unknown>, ctx: NormalizeConte
   if (type === "say" || type === "output.message") return say(event);
   if (type === "speech.status") return speech(event);
   if (type === "ask") return ask(event);
-  if (type === "ask.answer" || type === "ask.resolved") return askResolved(event);
+  if (type === "question.opened") return ask({ ...event, question: event.question ?? event.text });
+  if (type === "ask.answer" || type === "ask.resolved" || type === "question.resolved") return askResolved(event);
   if (type === "plan.proposed") return planProposed(event);
   if (type === "plan.decision") return planDecision(event);
   if (type === "plan.result") return planResult(event);
@@ -68,14 +91,16 @@ function parse(type: string, event: Record<string, unknown>, ctx: NormalizeConte
   if (type.startsWith("action.")) return actionEvent(type, event, ctx.now);
   if (type === "incident.updated" || type === "incident") return incident(event);
   if (type === "executor.status") {
-    return [{ type: "executor", connected: event.connected === true, status: asString(event.status) ?? (event.connected === true ? "executor online" : "executor offline") }];
+    const online = event.online === true || event.connected === true;
+    const status = asString(event.status) ?? (online ? "executor online" : "executor offline");
+    return [{ type: "executor", connected: online, status }];
   }
   if (type === "caregiver.alert") return caregiverAlert(event, ctx.now);
   return null;
 }
 
 function streamMeta(event: Record<string, unknown>): { dedupKey?: string; seq?: number; sessionId?: string } {
-  const seq = finiteNumber(event.seq);
+  const seq = finiteNumber(event.seq ?? event.sequence);
   const sessionId = asString(event.session_id ?? event.sessionId) ?? undefined;
   return { seq: seq ?? undefined, sessionId };
 }
@@ -247,7 +272,7 @@ function planResult(event: Record<string, unknown>): CanonicalEvent[] | null {
     const actionId = asString(row.action_id ?? row.actionId);
     if (!actionId) return null;
     const raw = row.status;
-    const rawStatus = raw === "ok" || raw === "error" || raw === "skipped" ? raw : "unknown";
+    const rawStatus = raw === "ok" || raw === "succeeded" ? "ok" : raw === "error" || raw === "failed" ? "error" : raw === "skipped" || raw === "cancelled" ? "skipped" : "unknown";
     results.push({
       actionId,
       rawStatus,
@@ -262,6 +287,8 @@ function planResult(event: Record<string, unknown>): CanonicalEvent[] | null {
 
 function providerConfirmed(row: Record<string, unknown>): boolean {
   if (row.provider_confirmed === true || row.confirmed === true) return true;
+  const verification = asString(row.verification);
+  if (verification === "state_committed" || verification === "playback_confirmed" || verification === "provider_delivered") return true;
   const playback = asString(row.playback ?? row.provider_status);
   return playback === "playing" || playback === "confirmed";
 }
@@ -347,6 +374,12 @@ function actionEvent(type: string, event: Record<string, unknown>, now: number):
   if (type === "action.proposed") return [{ ...base, status: "proposed" }];
   if (type === "action.approved") return [{ ...base, status: "approved" }];
   if (type === "action.started") return [{ ...base, status: "started" }];
+  if (type === "action.result") {
+    const status = asString(event.status);
+    if (status === "succeeded") return actionEvent("action.completed", event, now);
+    if (status === "failed" || status === "cancelled" || status === "skipped") return actionEvent("action.failed", event, now);
+    return [{ ...base, status: "unknown" }];
+  }
   if (type === "action.failed") return [{ ...base, status: "failed" }];
   if (type === "action.accepted") return [{ ...base, status: "accepted" }];
   if (type === "action.delivered") return [{ ...base, status: "delivered", patch: messagePatch(event, "delivered", now) }];
@@ -407,6 +440,9 @@ function caregiverAlert(event: Record<string, unknown>, now: number): CanonicalE
 export function parseHomePayload(raw: unknown, now: number): HomePatch | null {
   const record = asRecord(raw);
   if (!record) return null;
+  if (Array.isArray(record.lights) || Array.isArray(record.blinds) || Array.isArray(record.media)) {
+    return parseV2Home(record, now);
+  }
   const rooms = asRecord(record.rooms);
   if (rooms) return parseRooms(rooms, record, now);
   if (record.lamp || record.ceiling || record.lights || record.blinds || record.speaker || record.flash || record.caption) {
@@ -415,6 +451,56 @@ export function parseHomePayload(raw: unknown, now: number): HomePatch | null {
   const nested = asRecord(record.state);
   if (nested) return parseHomePayload(nested, now);
   return null;
+}
+
+function parseV2Home(record: Record<string, unknown>, now: number): HomePatch | null {
+  const patch: HomePatch = { replace: true, lights: [], blinds: [] };
+  const revision = finiteNumber(record.revision);
+  if (revision != null) patch.revision = revision;
+  if (Array.isArray(record.lights)) {
+    for (const item of record.lights) {
+      const row = asRecord(item);
+      const id = asString(row?.id);
+      if (!row || !id) continue;
+      const reading = readLight(id, row);
+      if (reading === "invalid") return null;
+      if (reading) patch.lights!.push(reading);
+    }
+  }
+  if (Array.isArray(record.blinds)) {
+    for (const item of record.blinds) {
+      const row = asRecord(item);
+      const id = asString(row?.id);
+      if (!row || !id) continue;
+      const reading = readBlind(id, row);
+      if (reading === "invalid") return null;
+      if (reading) patch.blinds!.push(reading);
+    }
+  }
+  const media = Array.isArray(record.media) ? record.media.map(asRecord).find((row) => row != null) : null;
+  if (media) {
+    const speaker = readSpeaker(
+      { sound: media.sound_id ?? media.title ?? null, volume: media.volume, playing: media.playback === "playing" },
+      true,
+    );
+    if (speaker === "invalid") return null;
+    if (speaker) patch.speaker = speaker;
+  }
+  const flashes = Array.isArray(record.flashes) ? record.flashes : [];
+  const flash = asRecord(flashes[flashes.length - 1]);
+  if (flash) {
+    const parsed = readFlash({ ...flash, until: flash.ends_at }, now);
+    if (parsed === "invalid") return null;
+    patch.flash = parsed;
+  }
+  const captions = Array.isArray(record.captions) ? record.captions : [];
+  const caption = [...captions].reverse().map(asRecord).find((row) => row != null && row.resolved !== true);
+  if (caption) {
+    const parsed = readCaption(caption, now);
+    if (parsed === "invalid") return null;
+    patch.caption = parsed ?? null;
+  }
+  return patch;
 }
 
 function parseRooms(rooms: Record<string, unknown>, root: Record<string, unknown>, now: number): HomePatch | null {

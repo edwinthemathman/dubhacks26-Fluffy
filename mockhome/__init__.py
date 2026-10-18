@@ -1,1 +1,1 @@
-"""Mock living room. Devices change only through this process."""
+"""Output service. Directory name stays mockhome for this milestone."""

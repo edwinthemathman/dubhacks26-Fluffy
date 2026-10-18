@@ -1,18 +1,29 @@
 [project]
 name = "fluffy"
-version = "0.1.0"
-description = "Fluffy execution subsystem: plans, tool registry, mock home, and stub executor"
+version = "0.2.0"
+description = "Fluffy: one harness decides, and the v2 executor applies approved plans."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "httpx>=0.27",
-    "pydantic>=2.6",
+    "perceptron>=0.4.0",
+    "pydantic>=2.9",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.12",
     "uvicorn>=0.32",
     "websockets>=13",
 ]
 
+[dependency-groups]
+dev = [
+    "opencv-python>=5.0.0.93",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
 [project.optional-dependencies]
 dev = [
+    "opencv-python>=5.0.0.93",
     "pytest>=8",
     "pytest-asyncio>=0.24",
 ]
@@ -32,3 +43,4 @@ include = ["fluffy*", "mockhome*", "executor_stub*"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+addopts = "--import-mode=importlib"

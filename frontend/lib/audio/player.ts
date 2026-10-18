@@ -3,7 +3,7 @@ export type SpeechRequest = {
   audioUrl: string;
 };
 
-export type PlaybackStatus = "played" | "failed";
+export type PlaybackStatus = "started" | "ended" | "failed" | "blocked";
 
 /**
  * One HTMLAudio element. Message ids are remembered so a route change or
@@ -65,8 +65,14 @@ export class SpeechPlayer {
       this.onStatus(next.messageId, status);
       this.pump();
     };
-    audio.onended = () => finish("played");
+    audio.onended = () => finish("ended");
     audio.onerror = () => finish("failed");
-    void audio.play().catch(() => finish("failed"));
+    void audio.play().then(() => {
+      if (generation !== this.generation || this.playingId !== next.messageId) return;
+      this.onStatus(next.messageId, "started");
+    }).catch((error: unknown) => {
+      const blocked = error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
+      finish(blocked ? "blocked" : "failed");
+    });
   }
 }

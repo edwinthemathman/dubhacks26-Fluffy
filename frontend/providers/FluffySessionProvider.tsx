@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { SpeechPlayer } from "@/lib/audio/player";
-import { getJson, healthUrl, postJson, questionUrl, speechAckUrl, stopUrl, textInputUrl, toolsUrl } from "@/lib/fluffy/client";
+import { getJson, healthUrl, postJson, questionUrl, sessionUrl, stateUrl, stopUrl, textInputUrl, toolsUrl } from "@/lib/fluffy/client";
 import { readPublicConfig, type FluffyPublicConfig } from "@/lib/fluffy/config";
 import { normalizeEvent } from "@/lib/fluffy/normalizeEvent";
 import { thinkingLabel, type SensingFacts } from "@/lib/fluffy/phrases";
@@ -64,6 +64,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
   const captureRef = useRef<CaptureController | null>(null);
   const playerRef = useRef<SpeechPlayer | null>(null);
   const videoNode = useRef<HTMLVideoElement | null>(null);
+  const clientIdRef = useRef(createId("cli"));
   const retryRef = useRef(0);
   useEffect(() => {
     stateRef.current = state;
@@ -96,12 +97,14 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
       }
     });
     const player = new SpeechPlayer((messageId, status) => {
-      apply({ type: "speech", messageId, status });
-      capture.noteSpeechEnded();
-      void postJson(speechAckUrl(config), { session_id: stateRef.current.sessionId, message_id: messageId, status }).then((result) => {
-        if (result.missing) {
-          apply({ type: "capability", name: "inference", available: false, detail: "POST /api/speech/status is not on this backend. Playback was local only." });
-        }
+      const shown = status === "started" ? "playing" : status === "ended" ? "played" : "failed";
+      apply({ type: "speech", messageId, status: shown });
+      if (status !== "started") capture.noteSpeechEnded();
+      void postJson(`${config.httpBase}/api/audio/ack`, {
+        session_id: stateRef.current.sessionId,
+        message_id: messageId,
+        client_id: clientIdRef.current,
+        status,
       });
     });
     playerRef.current = player;
@@ -116,9 +119,9 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     const player = playerRef.current;
     if (!player) return;
     for (const item of state.speechQueue) {
-      if (item.audioUrl && item.permitAudio) player.enqueue({ messageId: item.messageId, audioUrl: item.audioUrl });
+      if (item.audioUrl && item.permitAudio) player.enqueue({ messageId: item.messageId, audioUrl: resolveHarnessUrl(config.httpBase, item.audioUrl) });
     }
-  }, [state.speechQueue]);
+  }, [config.httpBase, state.speechQueue]);
 
   useEffect(() => {
     const flash = state.home.flash;
@@ -132,7 +135,6 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let timer = 0;
     let buffer: unknown[] = [];
-    let resync = false;
     let cancelled = false;
     const connect = () => {
       if (cancelled) return;
@@ -142,19 +144,19 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
       socket.onopen = () => {
         retryRef.current = 0;
         buffer = [];
-        resync = true;
         apply({ type: "connection", status: "open" });
-        timer = window.setTimeout(() => {
-          resync = false;
-          flushBuffer(buffer, ingest);
-          buffer = [];
-        }, 80);
+        apply({ type: "notice", text: null });
       };
       socket.onmessage = (message) => {
         const raw = parseMessage(message.data);
         if (raw == null) return;
-        if (resync) buffer.push(raw);
-        else ingest(raw, false);
+        buffer.push(raw);
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => {
+          const pending = buffer;
+          buffer = [];
+          for (const item of pending) ingest(item, false);
+        }, 0);
       };
       socket.onerror = () => {
         apply({ type: "notice", text: "The UI connection could not reach the backend." });
@@ -167,13 +169,29 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
         timer = window.setTimeout(connect, wait);
       };
     };
-    connect();
+    void (async () => {
+      const session = await getJson(sessionUrl(config));
+      if (cancelled) return;
+      const sessionBody = session.body && typeof session.body === "object" ? (session.body as { session_id?: unknown }) : null;
+      const sessionId = typeof sessionBody?.session_id === "string" ? sessionBody.session_id : null;
+      if (session.ok && sessionId) {
+        setState((current) => (current.sessionId === sessionId ? current : { ...current, sessionId }));
+      }
+      const snapshot = await getJson(stateUrl(config));
+      if (cancelled) return;
+      if (snapshot.ok && snapshot.body && typeof snapshot.body === "object") {
+        ingest({ type: "home.snapshot", ...(snapshot.body as Record<string, unknown>) }, false);
+      } else if (!snapshot.ok && snapshot.status !== 0) {
+        apply({ type: "notice", text: "Home state is unavailable." });
+      }
+      connect();
+    })();
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
       socketRef.current?.close();
     };
-  }, [apply, config.wsBase, ingest]);
+  }, [apply, config, ingest]);
 
   useEffect(() => {
     void getJson(healthUrl(config)).then((result) => {
@@ -236,9 +254,8 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     }
     setAnswering(true);
     const result = await postJson(questionUrl(config, question.id), {
-      session_id: stateRef.current.sessionId,
-      choice,
-      text: choice,
+      answer: choice,
+      source: "button",
     });
     setAnswering(false);
     if (!result.ok) {
@@ -260,9 +277,10 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     if (!capture) return;
     if (videoNode.current) capture.attach(videoNode.current);
     await capture.start(stateRef.current.sessionId);
+    void postJson(`${config.httpBase}/api/session/speaker`, { client_id: clientIdRef.current });
     setPaused(false);
     setStream(capture.previewStream());
-  }, []);
+  }, [config.httpBase]);
 
   const pauseFluffy = useCallback(() => {
     const capture = captureRef.current;
@@ -278,7 +296,7 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
 
   const stopFluffy = useCallback(async () => {
     await captureRef.current?.stop();
-    playerRef.current?.clearPending();
+    playerRef.current?.stop();
     setStream(null);
     setPaused(false);
     if (config.contract === "execution-v2") {
@@ -363,22 +381,6 @@ export function useSession(): SessionApi {
   return value;
 }
 
-function flushBuffer(buffer: unknown[], ingest: (raw: unknown, historical: boolean) => void): void {
-  let snapshot = -1;
-  buffer.forEach((raw, index) => {
-    const record = raw && typeof raw === "object" ? (raw as { type?: unknown }).type : null;
-    if (record === "state.snapshot" || record === "home.state" || record === "snapshot" || (record === "state" && raw && typeof raw === "object" && "state" in raw)) {
-      snapshot = index;
-    }
-  });
-  if (snapshot >= 0) {
-    ingest(buffer[snapshot], true);
-    for (let i = snapshot + 1; i < buffer.length; i += 1) ingest(buffer[i], false);
-    return;
-  }
-  for (const raw of buffer) ingest(raw, true);
-}
-
 function parseMessage(data: unknown): unknown {
   if (typeof data !== "string") return data;
   try {
@@ -391,4 +393,9 @@ function parseMessage(data: unknown): unknown {
 function createId(prefix: string): string {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`;
   return `${prefix}_${id}`;
+}
+
+function resolveHarnessUrl(base: string, url: string): string {
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${base.replace(/\/+$/, "")}${url.startsWith("/") ? url : `/${url}`}`;
 }

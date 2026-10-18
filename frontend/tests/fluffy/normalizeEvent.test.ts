@@ -17,6 +17,49 @@ describe("asLevel", () => {
 });
 
 describe("normalizeEvent", () => {
+  it("reads a version 2 event envelope and a flat home snapshot", () => {
+    const events = normalizeEvent(
+      {
+        event_id: "evt_1",
+        session_id: "ses_server",
+        sequence: 4,
+        timestamp: "2026-10-18T01:00:00Z",
+        type: "home.snapshot",
+        payload: {
+          revision: 3,
+          lights: [
+            { id: "lamp.living_floor", luminosity: 30, warmth: "warm" },
+            { id: "light.living_ceiling", luminosity: 30, warmth: "warm" },
+          ],
+          blinds: [{ id: "blinds.living_window", position: 100 }],
+          media: [{ room: "living_room", sound_id: null, volume: 35, playback: "idle" }],
+        },
+      },
+      { now: NOW },
+    );
+    expect(events[0]).toMatchObject({
+      type: "snapshot",
+      seq: 4,
+      sessionId: "ses_server",
+      patch: {
+        revision: 3,
+        lights: [
+          { id: "lamp.living_floor", luminosity: 30, warmth: "warm" },
+          { id: "light.living_ceiling", luminosity: 30, warmth: "warm" },
+        ],
+      },
+    });
+    const started = normalizeEvent(
+      {
+        event_id: "evt_2",
+        sequence: 5,
+        type: "action.result",
+        payload: { result: { action_id: "act_demo", plan_id: "pln_demo", tool: "dim_lights", status: "succeeded", verification: "state_committed" } },
+      },
+      { now: NOW },
+    );
+    expect(started[0]).toMatchObject({ type: "action", actionId: "act_demo", status: "verified" });
+  });
   it("maps legacy live events and keeps lamp and ceiling apart", () => {
     const events = normalizeEvent(
       { type: "state", lamp: { luminosity: 1, warmth: "warm" }, ceiling: { luminosity: 40 }, blinds: 0 },
