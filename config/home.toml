@@ -1,0 +1,74 @@
+# Demo home. Device ids and media ids are the only targets tools may name.
+# Spotify track URIs and provider secrets are not model arguments.
+
+schema_version = "2.0"
+
+[demo]
+clap_enabled = true
+clap_cooldown_s = 15
+no_restart_if_same_track = true
+automatic_comfort = true
+plan_ttl_s = 30
+clap_fresh_s = 5
+room_cue_fresh_s = 10
+
+[safety]
+question_count = 2
+response_window_s = 12
+checkin_1 = "Are you okay? Say 'I'm okay' or 'help me.'"
+checkin_2 = "Are you okay? Please respond. If I don't hear from you, I'll message your trusted contact."
+alert_template = "Fluffy demo: a person may have fallen in the living room and did not respond to two check-ins. Please check on them."
+audio_failure_note = "The audio check-in could not be played."
+
+[speech]
+max_utterance_chars = 240
+generation_timeout_s = 8
+ack_grace_s = 3
+total_cap_s = 25
+suppression_tail_ms = 300
+
+[timeouts]
+local_state_s = 5
+spotify_s = 10
+photon_accept_s = 8
+
+[warmth]
+warm = "#FFD6A0"
+neutral = "#FFF1D0"
+cool = "#DDEBFF"
+
+[[rooms]]
+id = "living_room"
+label = "Living room"
+speaker = "speaker.living"
+display = "companion.living"
+
+[[rooms.lights]]
+id = "lamp.living_floor"
+label = "floor lamp next to the sofa"
+
+[[rooms.lights]]
+id = "light.living_ceiling"
+label = "ceiling light"
+
+[[rooms.blinds]]
+id = "blinds.living_window"
+label = "living room window blinds"
+
+[[media]]
+id = "arrival_song"
+provider = "spotify"
+title = "Arrival song"
+uri_env = "SPOTIFY_ARRIVAL_TRACK_URI"
+
+[[media]]
+id = "chime"
+provider = "local"
+title = "Chime"
+asset = "assets/chime.wav"
+
+[[media]]
+id = "doorbell"
+provider = "local"
+title = "Doorbell"
+asset = "assets/doorbell.wav"

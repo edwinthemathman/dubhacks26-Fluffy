@@ -1,0 +1,87 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "message_id": {
+      "title": "Message Id",
+      "type": "string"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "priority": {
+      "enum": [
+        "normal",
+        "high"
+      ],
+      "title": "Priority",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "speak": {
+      "default": false,
+      "title": "Speak",
+      "type": "boolean"
+    },
+    "audio_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Audio Url"
+    },
+    "playback": {
+      "default": "none",
+      "enum": [
+        "none",
+        "generated",
+        "started",
+        "ended",
+        "failed",
+        "blocked"
+      ],
+      "title": "Playback",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "message_id",
+    "text",
+    "priority",
+    "created_at",
+    "source",
+    "session_id"
+  ],
+  "title": "OutputMessage",
+  "type": "object"
+}

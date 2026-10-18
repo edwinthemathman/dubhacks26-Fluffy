@@ -1,0 +1,185 @@
+{
+  "$defs": {
+    "Plan": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "trigger": {
+          "$ref": "#/$defs/Trigger"
+        },
+        "intent": {
+          "title": "Intent",
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/PlanAction"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "authorization_id": {
+          "title": "Authorization Id",
+          "type": "string"
+        },
+        "reasoning_summary": {
+          "title": "Reasoning Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "session_id",
+        "created_at",
+        "expires_at",
+        "trigger",
+        "intent",
+        "actions",
+        "authorization_id",
+        "reasoning_summary"
+      ],
+      "title": "Plan",
+      "type": "object"
+    },
+    "PlanAction": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "action_class": {
+          "enum": [
+            "comfort",
+            "notify",
+            "safety"
+          ],
+          "title": "Action Class",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_id",
+        "tool",
+        "args",
+        "evidence_ids",
+        "action_class"
+      ],
+      "title": "PlanAction",
+      "type": "object"
+    },
+    "Trigger": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "sound",
+            "speech",
+            "vision",
+            "safety",
+            "developer"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "event": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event"
+        },
+        "room": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Room"
+        },
+        "utterance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Utterance"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Trigger",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "const": "plan.proposed",
+      "default": "plan.proposed",
+      "title": "Type",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "plan": {
+      "$ref": "#/$defs/Plan"
+    }
+  },
+  "required": [
+    "plan"
+  ],
+  "title": "PlanProposed",
+  "type": "object"
+}
