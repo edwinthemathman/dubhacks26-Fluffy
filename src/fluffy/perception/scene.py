@@ -19,6 +19,7 @@ SoundLabel = Literal[
     "alarm",
     "speech",
     "clap",
+    "cough",
     "none",
 ]
 # Visible signs that someone is hurt. None of these need words.
@@ -52,7 +53,12 @@ ActionLabel = Literal[
     "stop_and_look_around",
     "turn_back",
     "press_remote_repeatedly",
+    "touch_throat",
+    "cough",
+    "clutch_throat",
 ]
+Side = Literal["left", "right", "middle", "front", "back", "unclear"]
+Facing = Literal["camera", "away", "side", "unclear"]
 YesNo = Literal["yes", "no", "unclear"]
 Zone = Literal["door", "sofa", "chair", "table", "kitchen_counter", "bed", "hallway", "other", "unknown"]
 
@@ -86,6 +92,7 @@ class PersonState(BaseModel):
     on_phone: YesNo = "unclear"
     face_visible: YesNo = "unclear"
     zone: Zone = "unknown"
+    facing: Facing = "unclear"
 
 
 class ObjectSighting(BaseModel):
@@ -103,6 +110,10 @@ class ObjectSighting(BaseModel):
     on_floor: bool = Field(default=False, description="True if it is on the floor at the end.")
     near_person: bool = Field(default=False, description="True if it is within arm's reach at the end.")
     on_head: bool = Field(default=False, description="True only for glasses pushed up on top of the head.")
+    side: Side = Field(
+        default="unclear",
+        description="Which part of the landmark the object is on, as seen in the picture.",
+    )
 
 
 class TagRead(BaseModel):

@@ -1,4 +1,4 @@
-export type ProfileId = "blind" | "deaf" | "speech_cognitive";
+export type ProfileId = "blind" | "deaf" | "speech_cognitive" | "elderly";
 
 export type ToolStatus =
   | "proposed"
@@ -96,7 +96,7 @@ export type FluffyEvent =
   | { type: "fallback"; active: boolean; scene?: string };
 
 export type ClientMessage =
-  | { type: "answer"; plan_id?: string; choice: "yes" | "no" | "help"; by: "button" | "typing" | "voice"; text?: string }
+  | { type: "answer"; plan_id?: string; choice: string; by: "button" | "typing" | "voice"; text?: string }
   | { type: "profile.set"; profile: ProfileId }
   | { type: "room.reset" }
   | { type: "volume.set"; volume: number }

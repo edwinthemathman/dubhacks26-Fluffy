@@ -20,9 +20,11 @@ export function Companion() {
     speakingRef: speaking,
   });
 
-  const answer = (choice: "yes" | "no" | "help") => {
+  const answer = (choice: string) => {
     send({ type: "answer", choice, by: "button" });
   };
+  const choices = question?.choices ?? [];
+  const offered = choices.filter((choice) => !["yes", "no", "help"].includes(choice.toLowerCase()));
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -42,25 +44,25 @@ export function Companion() {
           {caption}
         </p>
         <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.yes}
-            onClick={() => {
-              // #region agent log
-              fetch("http://127.0.0.1:7643/ingest/889f4935-7c87-40ef-88c8-e26de67696a8",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"9d207c"},body:JSON.stringify({sessionId:"9d207c",hypothesisId:"D",location:"Companion.tsx:yes",message:"yes clicked",data:{hasQuestion:Boolean(question)},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
-              answer("yes");
-            }}
-            disabled={!question}
-          >
-            Yes
-          </button>
-          <button type="button" className={styles.no} onClick={() => answer("no")} disabled={!question}>
-            No
-          </button>
-          <button type="button" className={styles.help} onClick={() => answer("help")}>
-            Need help
-          </button>
+          {offered.length > 0 ? (
+            offered.map((choice) => (
+              <button key={choice} type="button" className={styles.choice} onClick={() => answer(choice)} disabled={!question}>
+                {choice}
+              </button>
+            ))
+          ) : (
+            <>
+              <button type="button" className={styles.yes} onClick={() => answer("yes")} disabled={!question}>
+                Yes
+              </button>
+              <button type="button" className={styles.no} onClick={() => answer("no")} disabled={!question}>
+                No
+              </button>
+              <button type="button" className={styles.help} onClick={() => answer("help")}>
+                Need help
+              </button>
+            </>
+          )}
         </div>
         <button
           type="button"

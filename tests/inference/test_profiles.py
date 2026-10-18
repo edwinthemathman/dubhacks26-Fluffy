@@ -17,7 +17,11 @@ def test_deaf_profile_is_never_audio_only():
 
 def test_profile_presets_match_the_plan():
     loaded = profiles()
-    assert set(loaded) == {"blind", "deaf", "speech_cognitive"}
+    assert set(loaded) == {"blind", "deaf", "speech_cognitive", "elderly"}
+    elderly = loaded["elderly"]
+    assert elderly.output.speech is True
+    assert "water bottle" in elderly.important_objects
+    assert elderly.questions.confirm_back == "always"
 
     blind = loaded["blind"]
     assert blind.output.speech is True

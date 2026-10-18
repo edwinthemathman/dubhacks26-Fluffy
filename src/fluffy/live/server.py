@@ -89,7 +89,7 @@ def create_app(loop_factory=None, voice_factory=None) -> FastAPI:
             live = LiveLoop(
                 PerceptronPerceiver(client),
                 profiles,
-                profile_id="blind",
+                profile_id="elderly",
                 emit=hub.emit,
                 habits=habits,
             )

@@ -39,5 +39,6 @@ export function profileLabel(profile: string | null): string {
   if (profile === "blind") return "Blind user";
   if (profile === "deaf") return "Deaf user";
   if (profile === "speech_cognitive") return "Speech / cognitive";
+  if (profile === "elderly") return "Elderly";
   return "No profile";
 }

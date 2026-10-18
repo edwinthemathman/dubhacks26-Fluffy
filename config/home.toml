@@ -37,6 +37,11 @@ warm = "#FFD6A0"
 neutral = "#FFF1D0"
 cool = "#DDEBFF"
 
+[camera]
+# Picture-left and picture-right, named as fixed spots in the room.
+left_anchor = "the window"
+right_anchor = "the door"
+
 [[rooms]]
 id = "living_room"
 label = "Living room"

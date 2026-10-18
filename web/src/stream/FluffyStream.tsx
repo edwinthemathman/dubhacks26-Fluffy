@@ -184,7 +184,8 @@ function applyLocal(snapshot: Snapshot, message: ClientMessage): Snapshot {
       by: message.by,
       choice: message.choice,
     });
-    if (message.choice === "no" || message.choice === "help") {
+    const declining = ["no", "help", "i'm fine", "im fine"].includes(message.choice.toLowerCase());
+    if (declining) {
       for (const tool of Object.values(turn.tools)) {
         if (tool.status === "asking" || tool.status === "proposed") {
           next = reduce(next, { type: "tool.status", call_id: tool.callId, status: "declined" });

@@ -40,7 +40,7 @@
     }
     fieldset { border: 0; margin: 0 0 18px; padding: 0; }
     legend, label { display: block; font-weight: 650; margin-bottom: 8px; }
-    .profiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .profiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .profiles label {
       font-weight: 600;
       border: 1px solid var(--line);
@@ -152,7 +152,8 @@
       <fieldset>
         <legend>Who is this for?</legend>
         <div class="profiles">
-          <label><input type="radio" name="profile" value="blind" checked /> Blind or low vision</label>
+          <label><input type="radio" name="profile" value="elderly" checked /> Elderly</label>
+          <label><input type="radio" name="profile" value="blind" /> Blind or low vision</label>
           <label><input type="radio" name="profile" value="deaf" /> Deaf or hard of hearing</label>
           <label><input type="radio" name="profile" value="speech_cognitive" /> Speech or cognitive</label>
         </div>

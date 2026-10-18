@@ -221,6 +221,7 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("alarm", ("alarm", "siren", "smoke detector", "beeping", "beeps")),
     ("snoring", ("snore", "snoring")),
     ("door", ("door opens", "door closes", "door creak", "latch", "keys jingle")),
+    ("cough", ("cough", "coughs", "coughing")),
     ("speech", ("speak", "speaks", "says", "said", "talk", "voice", "words")),
 ]
 
@@ -286,6 +287,38 @@ async def answer_from_audio(client: AsyncClient, wav: bytes, question: str) -> R
             regex="yes|no|help|other|unclear",
             reasoning_effort="none",
             max_completion_tokens=8,
+            timeout=LIVE_TIMEOUT_S,
+        )
+    except SDKError as exc:
+        return Read(error=_safe_error(exc), ms=_ms(started))
+    return Read(value=(completion.text or "").strip().lower(), ms=_ms(started), usage=_usage(completion))
+
+
+async def ask_frames(client: AsyncClient, window: Window, question: str, pattern: str) -> Read:
+    """One constrained question about the latest frames. The answer matches `pattern`."""
+    started = time.perf_counter()
+    try:
+        completion = await client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        *window.media(with_audio=False),
+                        {
+                            "type": "text",
+                            "text": (
+                                f"{LIVE_NOTE.format(seconds=window.seconds)}\n"
+                                f"{question}\n"
+                                "Answer with one choice from the allowed words and nothing else."
+                            ),
+                        },
+                    ],
+                }
+            ],
+            regex=pattern,
+            reasoning_effort="none",
+            max_completion_tokens=16,
             timeout=LIVE_TIMEOUT_S,
         )
     except SDKError as exc:

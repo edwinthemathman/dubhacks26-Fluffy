@@ -1,0 +1,31 @@
+id = "elderly"
+display_name = "Elderly"
+needs = ["speech", "captions", "simple_language"]
+vocabulary = ["Fluffy", "glasses", "water", "keys", "phone", "yes", "no", "help"]
+important_objects = ["wallet", "keys", "phone", "glasses", "hearing aids", "cane", "walker", "pill organizer", "water bottle"]
+
+[output]
+speech = true
+captions = true
+speech_rate = 0.9
+light_cues = true
+audio_only_forbidden = false
+
+[input]
+voice = true
+typing = true
+buttons = true
+nod = true
+pointing = true
+
+[questions]
+confirm_back = "always"
+style = "one_at_a_time"
+repeat_once = true
+repeat_after_s = 20
+
+[agreements]
+notify = true
+safety = true
+caregiver = "Alex"
+person_name = "Sam"

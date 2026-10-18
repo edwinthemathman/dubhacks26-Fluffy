@@ -1,0 +1,24 @@
+# How a pattern of plain gestures becomes one guess.
+# The labels themselves live in the scene prompt. These are the weights.
+
+[weights]
+context = 0.35
+not_with_them = 0.20
+in_view = 0.20
+usual_spot = 0.10
+moved = 0.15
+said = 0.50
+said_no = -0.50
+
+[limits]
+history_s = 20
+mute_minutes = 10
+gesture_gap_s = 10
+tell_score = 0.6
+tell_lead = 0.25
+
+[night]
+start_hour = 22
+end_hour = 6
+# A night check-in only happens at the door, after they have stood there 20 seconds.
+exit_hold_s = 20

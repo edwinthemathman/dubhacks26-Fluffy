@@ -17,7 +17,8 @@
   letter-spacing: -0.03em;
   line-height: 1.15;
 }
-.actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.choice { background: var(--surface); }
 .actions button {
   min-height: 76px;
   border-radius: 20px;

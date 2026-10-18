@@ -15,6 +15,7 @@ const PROFILES: { id: ProfileId; label: string }[] = [
   { id: "blind", label: "Blind" },
   { id: "deaf", label: "Deaf" },
   { id: "speech_cognitive", label: "Speech" },
+  { id: "elderly", label: "Elderly" },
 ];
 
 export function Demo() {

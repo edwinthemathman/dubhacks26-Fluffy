@@ -85,6 +85,15 @@ The habit code is already on this branch. These were not physically verified.
 
 Speech recognition now keeps the latest send and speaking callbacks in refs, so a render does not restart Chrome's recognizer. `/ws/live` reconnects with the same capped backoff as `/ws/ui` and leaves the camera up. The banner says "Reconnecting…" while that retry is in progress.
 
+## Instinct clips
+These are the gesture clips for the deeper guess (face and pockets, cough, cupped ear, raised palm, and the look-alikes). None have been recorded yet. `scripts/label_clips.py` prints the list and, once the clips and `PERCEPTRON_API_KEY` are present, the action labels Perceptron returns.
+
+| Clip | Result |
+|---|---|
+| Glasses search, water, cane, keys at the door | not run |
+| Look-alikes: scratch, worn glasses, crumbs, standing up, pet, TV | not run |
+| Cupped ear and raised palm, with and without music | not run |
+
 ## Still open
 - Nod answers (answer mode) aren't wired yet. Answers come from buttons, typing or voice.
 - No real fall has been tested on a live camera yet. Try it on the Demo page with a mat.

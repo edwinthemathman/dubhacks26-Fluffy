@@ -37,6 +37,7 @@ class ObjectNotice:
     location: str
     text: str
     choices: tuple[str, ...] = ()
+    chain: str = ""
 
 
 def important_for(profile: Profile) -> set[str]:
@@ -98,12 +99,15 @@ def object_notices(
     departing: bool = False,
     previous_floor: dict[str, bool] | None = None,
     fired: dict[str, datetime] | None = None,
+    skip_search: bool = False,
 ) -> list[ObjectNotice]:
     if scene is None or "fall" in derive(scene):
         return []
     important = important_for(profile)
     found: list[ObjectNotice] = []
-    found.extend(_searching(scene, memory, profile, now, important, fired))
+    # Action labels are read by instincts. The old searching flag is only a fallback.
+    if not skip_search:
+        found.extend(_searching(scene, memory, profile, now, important, fired))
     if departing or _clip_left(scene):
         found.extend(_left_behind(scene, memory, profile, now, important, fired))
     found.extend(_dropped(scene, memory, profile, now, important, previous_floor or {}, fired))

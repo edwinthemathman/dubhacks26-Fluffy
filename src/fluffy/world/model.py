@@ -59,6 +59,8 @@ class Recall(BaseModel):
     with_person: bool = False
     on_floor: bool = False
     near_person: bool = False
+    side: str = "unclear"
+    on_head: bool = False
 
 
 @dataclass
@@ -71,6 +73,8 @@ class Tag:
     near_person: bool = False
     home_desc: str | None = None
     unconfirmed: bool = False
+    side: str = "unclear"
+    on_head: bool = False
 
 
 class ContextSnapshot(BaseModel):
@@ -103,6 +107,8 @@ class ObjectMemory:
                     on_floor=item.on_floor,
                     near_person=item.near_person,
                     home_desc=place,
+                    side=item.side,
+                    on_head=item.on_head,
                 )
             else:
                 # A scan is a look at where things are now, so a move replaces the old spot.
@@ -111,6 +117,8 @@ class ObjectMemory:
                 tag.with_person = item.with_person
                 tag.on_floor = item.on_floor
                 tag.near_person = item.near_person
+                tag.side = item.side
+                tag.on_head = item.on_head
                 tag.last_seen_at = at
                 tag.name = item.name.strip() or tag.name
                 tag.unconfirmed = False
@@ -133,12 +141,16 @@ class ObjectMemory:
                     with_person=item.with_person,
                     on_floor=item.on_floor,
                     near_person=item.near_person,
+                    side=item.side,
+                    on_head=item.on_head,
                 )
                 continue
             tag.location_desc = place
             tag.with_person = item.with_person
             tag.on_floor = item.on_floor
             tag.near_person = item.near_person
+            tag.side = item.side
+            tag.on_head = item.on_head
             tag.last_seen_at = at
             tag.unconfirmed = False
             tag.name = item.name.strip() or tag.name
@@ -176,6 +188,8 @@ class ObjectMemory:
             with_person=found.with_person,
             on_floor=found.on_floor,
             near_person=found.near_person,
+            side=found.side,
+            on_head=found.on_head,
         )
 
     def lines(self, now: datetime) -> list[str]:
@@ -398,6 +412,10 @@ _OBJECT_NAMES = (
     "cane",
     "walker",
     "remote",
+    "water bottle",
+    "water",
+    "glass",
+    "mug",
     "cup",
     "bag",
     "book",

@@ -24,7 +24,8 @@ from typing import Any, Awaitable, Callable, Protocol
 from fluffy.brain.consent import ConsentManager, ConsentUpdate
 from fluffy.brain.cues import NOTIFY_SOUNDS, derive, volume_request, wants_music_stop
 from fluffy.brain.decide import _plan_from_devices, complete_paired_request
-from fluffy.brain.objects import important_for, object_notices, tag_lines, wants_room_scan
+from fluffy.brain.instincts import Guess, Instincts
+from fluffy.brain.objects import ObjectNotice, important_for, object_notices, tag_lines, wants_room_scan
 from fluffy.brain.habits import HabitBook, habit_note, habit_why
 from fluffy.brain.safety import CHECKIN_TEXT, PAIN_TEXT_S, SafetyEffect, SafetyMachine
 from fluffy.clock import Clock
@@ -34,6 +35,7 @@ from fluffy.live.buffers import AudioBuffer, FrameBuffer, SpeechGate, pad_pcm, t
 from fluffy.live.home import HomeState
 from fluffy.live.perceive import Decision, Read, Window
 from fluffy.live.presence import RoomPresence
+from fluffy.live.verify import confirm, questions_for
 from fluffy.live.voice_policy import VoicePolicy
 from fluffy.integrations import run_tool
 from fluffy.models import Action, Plan, Trigger
@@ -151,6 +153,17 @@ class PerceptronPerceiver:
 
     async def read_tags(self, window, *, profile=None):
         return await self._p.read_tags(self.client, window, profile=profile)
+
+    async def check(self, window, questions) -> dict[str, str]:
+        """Ask each double-check question on the same frames, in parallel."""
+
+        async def one(question) -> tuple[str, str]:
+            read = await self._p.ask_frames(self.client, window, question.text, question.regex)
+            value = read.value if isinstance(read.value, str) and read.value else "unclear"
+            return question.key, value
+
+        pairs = await asyncio.gather(*(one(question) for question in questions))
+        return dict(pairs)
 
     async def decide(
         self,
@@ -278,6 +291,10 @@ class LiveLoop:
         }
         self.world = WorldModel(self.clock, self.ids)
         self.notice_fired: dict[str, Any] = {}
+        self.instincts = Instincts()
+        self.open_instinct: str | None = None
+        self.last_spoken = ""
+        self.last_spoke_at = None
         self._floor_before: dict[str, bool] = {}
         self.texted_left: set[str] = set()
         self.want_scan = False
@@ -402,6 +419,10 @@ class LiveLoop:
         self.pending = None
         self.world = WorldModel(self.clock, self.ids)
         self.notice_fired.clear()
+        self.instincts = Instincts()
+        self.open_instinct = None
+        self.last_spoken = ""
+        self.last_spoke_at = None
         self.texted_left.clear()
         self._help_text_sent = False
         self._checkin_text_sent = False
@@ -586,7 +607,7 @@ class LiveLoop:
         self._on_cues(cues, trigger=" -> ".join(scene.timeline[-2:]) or scene.summary)
         self._consider_scan(scene, cues)
         if self.safety.phase in {"idle", "watching"} and "fall" not in cues:
-            self._handle_notices(scene, cues)
+            await self._handle_notices(scene, cues, window)
         said = scene.said.strip()
         if not said:
             if not self._recent_speech():
@@ -629,16 +650,39 @@ class LiveLoop:
         if reason:
             self.want_scan = True
 
-    def _handle_notices(self, scene: SceneState, cues: set[str]) -> None:
+    async def _handle_notices(self, scene: SceneState, cues: set[str], window: Window | None = None) -> None:
+        now = self.clock.now()
+        self.instincts.note(scene, now)
+        guess = self.instincts.guess(
+            scene,
+            self.world.objects,
+            self.profile,
+            now,
+            music_on=self._music_on(),
+            spoke_recently=self._spoke_recently(now),
+            last_line=self.last_spoken,
+        )
+        guess = await self._confirm_guess(guess, window)
+        observed = any(person.actions for person in scene.people if not person.on_screen)
+        if guess is not None and guess.kind == "safety":
+            self._perform_guess(guess, now)
+            return
+        if guess is not None and guess.kind in {"volume_up", "stop_music", "repeat"}:
+            self._perform_guess(guess, now)
+            return
+        if guess is not None and self._instinct_allowed(guess):
+            self._perform_guess(guess, now)
+            observed = True
         departing = "left_room" in cues or any(person.activity == "leaving" for person in scene.people)
         notices = object_notices(
             scene,
             self.world.objects,
             self.profile,
-            self.clock.now(),
+            now,
             departing=departing,
             previous_floor=self._floor_before,
             fired=self.notice_fired,
+            skip_search=observed,
         )
         for notice in notices:
             if notice.kind in {"searching", "out_of_reach"}:
@@ -661,6 +705,8 @@ class LiveLoop:
                 "trigger": notice.kind.replace("_", " "),
             }
         )
+        if getattr(notice, "chain", ""):
+            self.emit({"type": "think", "turn_id": turn_id, "note": notice.chain[:240]})
         turn = OpenTurn(turn_id)
         channels = set(self.profile.delivery_channels())
         steps: list[tuple[str, dict[str, Any]]] = []
@@ -692,8 +738,103 @@ class LiveLoop:
                 "trigger": notice.kind.replace("_", " "),
             }
         )
+        if getattr(notice, "chain", ""):
+            self.emit({"type": "think", "turn_id": turn_id, "note": notice.chain[:240]})
         request = DecideRequest("offer", notice.text[:40], set(self.active_cues), started)
         self._ask_user(turn_id, started, request, notice.text, list(notice.choices) or None)
+
+    async def _confirm_guess(self, guess: Guess | None, window: Window | None) -> Guess | None:
+        if guess is None or not guess.check:
+            return guess
+        questions = questions_for(guess.need)
+        checker = getattr(self.perceiver, "check", None)
+        if checker is None or window is None or not questions:
+            return guess
+        try:
+            answers = await checker(window, questions)
+        except Exception as exc:
+            log.warning("instinct check failed: %s", exc)
+            return None
+        checked = confirm(guess, answers)
+        if checked is None:
+            turn_id = self.ids("turn")
+            started = self.now()
+            self.emit({"type": "turn.start", "turn_id": turn_id, "kind": "offer", "trigger": "instinct"})
+            self.emit({"type": "think", "turn_id": turn_id, "note": "not sure, staying quiet"})
+            self._end(turn_id, started, "nothing", note="double-check disagreed")
+        return checked
+
+    def _instinct_allowed(self, guess: Guess) -> bool:
+        hold = self.policy.hold_reason(
+            someone_present=self._someone_present(),
+            question_open=self._open_question() is not None,
+            question=guess.text,
+        )
+        if hold:
+            return False
+        if guess.kind == "tell":
+            self.policy.note_unprompted()
+        return True
+
+    def _spoke_recently(self, now) -> bool:
+        if self.last_spoke_at is None:
+            return False
+        return (now - self.last_spoke_at).total_seconds() < 10
+
+    def _perform_guess(self, guess: Guess, now) -> None:
+        self.instincts.note_done(guess.need, now)
+        if guess.kind == "safety":
+            self._safety_effects(self.safety.on_event("possible_fall"), trigger=guess.need.replace("_", " "))
+            return
+        if guess.kind == "volume_up":
+            current = int(self.home.state["speaker"].get("volume") or 0)
+            if current <= 0:
+                current = 40
+            self._set_speaker_volume(min(100, current + 20))
+            self._say(None, guess.text, voice=True)
+            return
+        if guess.kind == "stop_music":
+            self._stop_music()
+            self._say(None, guess.text, voice=True)
+            return
+        if guess.kind == "repeat":
+            self._say(None, guess.text, voice=True)
+            return
+        notice = ObjectNotice(
+            "where" if guess.kind == "tell" else "searching",
+            guess.need,
+            "",
+            guess.text,
+            guess.choices,
+            chain=guess.chain,
+        )
+        if guess.kind == "ask":
+            self.open_instinct = guess.need
+            self._offer_notice(notice)
+            return
+        self._tell_notice(notice)
+
+    def _answer_instinct(self, need: str, choice: str, question: str, turn, by: str) -> None:
+        if choice in {"no", "nope", "nah", "i'm fine", "im fine", "i am fine"}:
+            self.instincts.mute(need, self.clock.now())
+            self.policy.note_declined_question(question)
+            if turn is not None:
+                self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by, "choice": "no"})
+            return
+        if turn is not None:
+            self.emit({"type": "ask.answer", "turn_id": turn.turn_id, "by": by, "choice": choice[:40]})
+        if choice in {"something else", "other"}:
+            self.open_instinct = need
+            self._offer_notice(ObjectNotice("searching", need, "", "What are you looking for?", ()))
+            return
+        name = choice.removeprefix("your ").strip()
+        recall = self.world.objects.recall(name, self.clock.now())
+        if recall.status == "unknown" or not (recall.location_desc or recall.home_desc):
+            self._follow_up(choice, question, None)
+            return
+        place = recall.location_desc or recall.home_desc or "in the room"
+        verb = "are" if name.endswith("s") else "is"
+        self._say(turn.turn_id if turn is not None else None, f"Your {name} {verb} {place}.", voice=True)
 
     def _tag_chips(self) -> list[str]:
         chips = []
@@ -775,6 +916,10 @@ class LiveLoop:
         if "clapping" in cues and not self.clap_played:
             self.clap_played = True
             self._play_claps()
+        # A raised palm is checked before it stops the music. A spoken "stop" still stops here.
+        palm = self.scene is not None and any(person.gesture == "stop" for person in self.scene.people)
+        if palm:
+            cues = set(cues) - {"stop_music"}
         if (
             "stop_music" in cues
             and playing
@@ -1045,6 +1190,8 @@ class LiveLoop:
             return
         voiced = bool(voice) and self.profile.output.speech
         say_id = self.ids("say")
+        self.last_spoken = text
+        self.last_spoke_at = self.clock.now()
         self.says[say_id] = {"text": text, "speed": float(self.profile.output.speech_rate)}
         while len(self.says) > 32:
             self.says.popitem(last=False)
@@ -1366,6 +1513,11 @@ class LiveLoop:
         self.consent.open = None
         self.open_turn = None
         self.policy.note_answered()
+        if self.open_instinct:
+            need = self.open_instinct
+            self.open_instinct = None
+            self._answer_instinct(need, choice, question, turn, by)
+            return
         if choice in {"no", "nope", "nah"}:
             self.policy.note_declined_question(question)
             if turn is not None:
@@ -1383,6 +1535,9 @@ class LiveLoop:
         words = text.lower().strip(" .!?")
         if words in {"i'm okay", "im okay", "i am okay"} or words.startswith(("i'm okay", "im okay", "i am okay")):
             await self._answer("okay", by=by)
+            return True
+        if self.open_instinct:
+            await self._answer(words, by=by)
             return True
         for choice in ("help", "yes", "no", "okay", "ok"):
             if words == choice or words.startswith(choice + " "):
