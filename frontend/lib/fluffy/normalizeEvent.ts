@@ -7,6 +7,7 @@ import {
   CEILING_ID,
   cssColor,
   finiteNumber,
+  FRONT_DOOR_ID,
   LAMP_ID,
   parseTime,
   pulsesFor,
@@ -747,6 +748,37 @@ function readCaption(value: unknown, now: number): HomePatch["caption"] | "inval
 export function patchFromNewState(value: unknown, now: number): HomePatch | null {
   const row = asRecord(value);
   if (!row) return null;
+  const door = asString(row.door);
+  if (door && (row.state === "open" || row.state === "closed")) {
+    if (door !== FRONT_DOOR_ID && door !== "bedroom_door") return null;
+    return { doors: [{ id: door, open: row.state === "open" }] };
+  }
+  const callTo = asString(row.to);
+  if (row.label === "call (demo)" && callTo) {
+    return { call: { to: callTo, until: now + 4000 } };
+  }
+  const flash = asRecord(row.flash);
+  if (flash) {
+    const parsed = readFlash({ ...flash, until: flash.ends_at ?? flash.until }, now);
+    if (parsed === "invalid") return null;
+    return parsed ? { flash: parsed } : null;
+  }
+  const levels = asRecord(row.luminosity);
+  if (levels) {
+    const lights: LightReading[] = [];
+    for (const [id, level] of Object.entries(levels)) {
+      if (id !== LAMP_ID && id !== CEILING_ID) continue;
+      const luminosity = asLevel(level);
+      if (luminosity == null) return null;
+      lights.push({ id, luminosity, warmth: null });
+    }
+    return lights.length ? { lights } : null;
+  }
+  if (typeof row.position === "number") {
+    const position = asLevel(row.position);
+    if (position == null) return null;
+    return { blinds: [{ id: BLINDS_ID, position }] };
+  }
   if (row.rooms || row.lamp || row.ceiling || row.lights || row.blinds || row.speaker || row.flash) {
     return parseHomePayload(row, now);
   }

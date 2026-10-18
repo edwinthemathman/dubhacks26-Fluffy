@@ -60,6 +60,56 @@
           "default": null,
           "title": "Eyes"
         },
+        "motion": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "small",
+                "purposeful"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Motion"
+        },
+        "activity_hint": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "reaching",
+                "picking_up",
+                "exercising",
+                "playing_on_floor"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Activity Hint"
+        },
+        "fall_confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fall Confidence"
+        },
         "gesture": {
           "anyOf": [
             {

@@ -28,4 +28,23 @@ def authorize_plan(plan: Plan, record: AuthorizationRecord | None, now: datetime
     expected = {action.action_id: action.action_class for action in plan.actions}
     if expected != record.action_classes:
         return "rejected", "authorization_mismatch"
+    blocked = _caregiver_rules(plan)
+    if blocked:
+        return "rejected", blocked
     return "approved", "authorized"
+
+
+def _caregiver_rules(plan: Plan) -> str | None:
+    """Second line for caregiver texts. Rules only: the safety machine already decided."""
+
+    for action in plan.actions:
+        if action.tool != "alert_caregiver":
+            continue
+        if plan.trigger.kind != "safety":
+            return "caregiver_not_from_safety"
+        incident = str(action.args.get("incident_id") or "")
+        if not incident.startswith("inc_"):
+            return "caregiver_missing_incident"
+        if not action.evidence_ids:
+            return "caregiver_missing_evidence"
+    return None

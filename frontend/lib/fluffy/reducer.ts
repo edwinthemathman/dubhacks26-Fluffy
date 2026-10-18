@@ -24,11 +24,13 @@ export function emptyHome(): HomeModel {
     revision: null,
     lights: {},
     blinds: {},
+    doors: {},
     speaker: { sound: null, volume: null, playback: "unknown", confirmed: false },
     flash: null,
     caption: null,
     caregiver: null,
     caregiverName: null,
+    call: null,
   };
 }
 
@@ -440,7 +442,10 @@ function applyPlanResult(state: SessionState, planId: string, resultStatus: stri
 
 function interpretResult(tool: string, result: ActionResultFact, now: number): { status: ActionStatus; detail?: string; patch?: HomePatch } {
   if (result.rawStatus === "error") return { status: "failed", detail: result.error ?? "Could not complete that" };
-  if (result.rawStatus === "skipped" || result.rawStatus === "unknown") {
+  if (result.rawStatus === "skipped") {
+    return { status: "failed", detail: result.error ?? "Left unchanged" };
+  }
+  if (result.rawStatus === "unknown") {
     return { status: "unknown", detail: result.error ?? (isMusicTool(tool) ? "Could not verify playback" : "Could not verify that action") };
   }
   if (isMessageTool(tool)) {
@@ -545,6 +550,10 @@ export function applyPatch(home: HomeModel, patch: HomePatch, now: number, previ
   for (const blind of patch.blinds ?? []) {
     blinds[blind.id] = { id: blind.id, position: blind.position };
   }
+  const doors = { ...previous.doors };
+  for (const door of patch.doors ?? []) {
+    doors[door.id] = { id: door.id, open: door.open };
+  }
   let speaker = home.speaker;
   if (patch.speaker) {
     speaker = {
@@ -565,11 +574,13 @@ export function applyPatch(home: HomeModel, patch: HomePatch, now: number, previ
     revision: patch.revision !== undefined ? patch.revision : home.revision,
     lights,
     blinds,
+    doors,
     speaker,
     flash: patch.flash === undefined ? (replace ? null : home.flash) : patch.flash,
     caption: patch.caption === undefined ? (replace ? null : home.caption) : patch.caption,
     caregiver,
     caregiverName: patch.caregiverName === undefined ? (replace ? null : home.caregiverName) : patch.caregiverName,
+    call: patch.call === undefined ? previous.call : patch.call,
   };
 }
 

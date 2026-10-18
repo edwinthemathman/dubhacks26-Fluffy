@@ -121,7 +121,6 @@ def system_prompt(profile: Profile) -> str:
         speech = "Speak, and also caption."
     else:
         speech = "Speak. Describe space relative to the person."
-    caregiver = profile.agreements.caregiver
     if profile.questions.confirm_back == "always":
         requests = "Spoken requests from this person get a confirm-back from the app, not from you."
     else:
@@ -137,20 +136,13 @@ def system_prompt(profile: Profile) -> str:
             "2. Then listen. Sound confirms what you saw or settles a tie: snoring means asleep, "
             "talking means awake, a groan or a thud backs up a fall.",
             "3. The transcript decides what they want. If it asks for something, call that tool now. "
-            "If it says they fell, can't get up, or need help, call alert_caregiver. "
             "If it names an object, that object is what they are after. "
-            "Words are not required: people who are hurt or unable to speak clearly often never say the obvious word.",
-            "4. If the picture plainly shows them fine and upright, do not call for help on words alone. "
-            "A request that fits the picture is the decision.",
+            "A request like 'help me get a bottle of water' is that request, not an emergency.",
+            "4. If the picture plainly shows them fine and upright, do what they asked. "
+            "You cannot text a caregiver. The safety check-in does that on its own.",
             "",
             "WHEN TO CALL A TOOL",
-            "- Someone falls, ends up on the floor, stays down, struggles to get up, or looks hurt "
-            "(grimacing, holding a body part, groaning, crying out): call alert_caregiver. "
-            "Do this even if they never say help. Call nothing else in that turn.",
-            "- A thud or crash with nobody clearly fine afterwards, someone going down at the "
-            "edge of the frame, or someone vanishing from view right after a thud: this is a "
-            "possible fall. Call alert_caregiver. The app asks before calling anyone, so a false "
-            "alarm only costs a question.",
+            "- Do not call alert_caregiver. It is not one of your tools.",
             "- Dozing off, eyes closing, lying back to rest: dim_lights luminosity 10-30, "
             "and set_light_warmth warm.",
             "- A hand covering their eyes against a bright lamp, held there: dim_lights "
@@ -162,7 +154,7 @@ def system_prompt(profile: Profile) -> str:
             "- One request can need several tools. Call all of them together. "
             "It's getting late and they want music: play_sound with sound=music and dim_lights "
             "in the same turn. Do not stop after the first part. "
-            "A fall is the exception: alert_caregiver and nothing else.",
+            "Never text the caregiver yourself.",
             "- They ask to open or close the front or bedroom door: open_door or close_door.",
             "- They ask for a song or to stop the music: play_music or stop_music.",
             "- They ask you to text someone: send_text. The app always asks before it sends.",
@@ -192,7 +184,7 @@ def system_prompt(profile: Profile) -> str:
             "",
             "CONSENT IS HANDLED FOR YOU",
             "A tool call is only a proposal. The app asks the person before anything changes, "
-            f'and asks "Should I call {caregiver} for help?" before any caregiver call. '
+            "Caregiver texts are not yours to send. "
             "So never hold back a fitting tool call to be polite or to wait for permission. "
             "Skipping a needed call is the worst mistake.",
             requests,
@@ -231,6 +223,9 @@ def _split(
             parsed = parse_call(call.name, call.arguments)
         except ToolError as exc:
             rejected.append(f"{exc.name}: {exc.detail}")
+            continue
+        if parsed.name == "alert_caregiver":
+            rejected.append("alert_caregiver: blocked, only the safety check-in may text the caregiver")
             continue
         if parsed.name in META_TOOLS:
             meta.append((call.id, parsed))

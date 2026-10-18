@@ -1,8 +1,41 @@
-import { CEILING_ID, LAMP_ID } from "@/lib/fluffy/levels";
-import type { ActionModel, HomeModel, QuestionModel } from "@/lib/fluffy/types";
-import { isLightTool, isMessageTool, isMusicTool } from "@/lib/fluffy/phrases";
-import type { PendingState, RoomObject, RoomState } from "./state";
+import { CEILING_ID, FRONT_DOOR_ID, LAMP_ID, parseTime } from "@/lib/fluffy/levels";
+import type { ActionModel, ActionStatus, HomeModel, PlanModel, QuestionModel, SessionState } from "@/lib/fluffy/types";
+import type { PendingState, RoomState } from "./state";
 import { unknownRoom } from "./state";
+import { actionTargets } from "./toolMap";
+
+const PENDING: ReadonlySet<ActionStatus> = new Set(["proposed", "approved", "started", "unknown"]);
+const FAILED: ReadonlySet<ActionStatus> = new Set(["failed", "rejected"]);
+
+/** Non-terminal markers from every live turn. Failed markers stay on the current turn. */
+export function actionsForRoom(state: SessionState, now: number): ActionModel[] {
+  const current = [...state.turns].reverse().find((turn) => !turn.recorded && turn.open) ?? [...state.turns].reverse().find((turn) => !turn.recorded);
+  const chosen: ActionModel[] = [];
+  for (const turn of state.turns) {
+    if (turn.recorded) continue;
+    for (const id of turn.actionIds) {
+      const action = state.actions[id];
+      if (!action) continue;
+      const expired = isExpired(action, state.plans, now);
+      if (PENDING.has(action.status) && expired) {
+        chosen.push({ ...action, status: "failed", detail: action.detail ?? "Not confirmed" });
+        continue;
+      }
+      if (FAILED.has(action.status)) {
+        if (turn.id === current?.id) chosen.push(action);
+        continue;
+      }
+      if (PENDING.has(action.status)) chosen.push(action);
+    }
+  }
+  return chosen;
+}
+
+function isExpired(action: ActionModel, plans: Record<string, PlanModel>, now: number): boolean {
+  const expires = action.planId ? plans[action.planId]?.expiresAt : undefined;
+  const at = parseTime(expires);
+  return at != null && at <= now;
+}
 
 export function projectHomeToRoom(input: {
   home: HomeModel;
@@ -22,6 +55,8 @@ export function projectHomeToRoom(input: {
   const ceiling = home.lights[CEILING_ID];
   if (lamp) room.lamp = { level: lamp.luminosity, warmth: lamp.warmth };
   if (ceiling) room.ceiling = { level: ceiling.luminosity, warmth: ceiling.warmth };
+  const front = home.doors[FRONT_DOOR_ID];
+  if (front) room.door = { open: front.open };
   const blind = Object.values(home.blinds)[0];
   if (blind) room.blinds = { position: blind.position };
   const speaker = home.speaker;
@@ -37,6 +72,14 @@ export function projectHomeToRoom(input: {
     room.flash = null;
   }
   room.caption = home.caption?.text ?? null;
+  if (home.call && now < home.call.until) {
+    room.phone = {
+      mode: "incoming",
+      delivery: null,
+      to: home.call.to,
+      animateUntil: home.call.until,
+    };
+  }
   if (home.caregiver) {
     const alert = home.caregiver;
     const animating = now < alert.animateUntil;
@@ -70,16 +113,8 @@ function pendingOf(actions: ActionModel[]): RoomState["pending"] {
   return pending;
 }
 
-function targetsOf(action: ActionModel): RoomObject[] {
-  if (action.tool === "set_blinds") return ["blinds"];
-  if (isMusicTool(action.tool)) return ["speaker"];
-  if (isMessageTool(action.tool)) return ["phone"];
-  if (!isLightTool(action.tool)) return [];
-  if (action.tool === "flash_lights" || action.tool === "set_light_warmth") return ["lamp", "ceiling"];
-  if (action.args.light === CEILING_ID) return ["ceiling"];
-  if (action.args.light === LAMP_ID) return ["lamp"];
-  if (action.args.light == null) return ["lamp", "ceiling"];
-  return [];
+function targetsOf(action: ActionModel): ReturnType<typeof actionTargets> {
+  return actionTargets(action.tool, action.args);
 }
 
 function markOf(action: ActionModel): PendingState | null {

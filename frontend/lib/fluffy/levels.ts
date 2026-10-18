@@ -70,6 +70,8 @@ export function parseTime(value: unknown): number | null {
 export const LAMP_ID = "lamp.living_floor";
 export const CEILING_ID = "light.living_ceiling";
 export const BLINDS_ID = "blinds.living_window";
+export const FRONT_DOOR_ID = "front_door";
+export const LIVING_ROOM_ID = "living_room";
 
 export function lightLabel(id: string): string {
   if (id === LAMP_ID) return "Floor lamp";

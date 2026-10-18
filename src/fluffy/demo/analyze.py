@@ -14,7 +14,7 @@ from typing import Any
 from perceptron import Client, SDKError, pydantic_format, video
 
 from fluffy.brain.consent import ConsentManager
-from fluffy.brain.cues import build_help_plan, derive
+from fluffy.brain.cues import derive
 from fluffy.brain.objects import find_line, important_for, object_notices, tag_lines
 from fluffy.brain.habits import (
     clip_transition_cues,
@@ -233,12 +233,11 @@ def _analyze_uploaded(
     plan = complete_paired_request(plan, f"{transcript}\n{utterance}")
     habit = None
     if plan is None and "fall" in cues:
-        plan = build_help_plan(clock, profile)
         trace.append(
             {
                 "step": "fallback",
-                "summary": "The model proposed nothing, so the fall rule asked about calling for help.",
-                "tool": "alert_caregiver",
+                "summary": "A fall is handled by the safety check-in, which asks if they are okay before anyone is texted.",
+                "status": "checking",
             }
         )
     elif plan is None and applicable:
@@ -356,7 +355,11 @@ SCENE_PROMPT = (
     "at any point, even if nobody says anything, including going down "
     "at the edge of the frame or out of view.\n"
     "- on_floor: true if they are on the floor now. location_surface is "
-    "what they are on now: floor, sofa, bed, or unknown.\n"
+    "what they are on now: floor, sofa, bed, or unknown. "
+    "Bending, crouching, stretching, playing, or sitting on the floor on purpose is not a fall.\n"
+    "- motion: none, small, or purposeful. purposeful means reaching, waving, or walking.\n"
+    "- activity_hint: none, reaching, picking_up, exercising, or playing_on_floor.\n"
+    "- fall_confidence: 0 to 1, how sure you are this is a fall rather than a deliberate floor pose.\n"
     "- distress_signs: any of grimacing, holding_body, not_getting_up, "
     "struggling_to_rise, motionless, crawling. Empty if none.\n"
     "- activity: sleeping, arriving, leaving, idle, distressed, fallen, or unknown. "
@@ -685,8 +688,8 @@ def _user_text(
             "The transcript is a decision. If it asks for several things, call every matching tool "
             "in this same turn. It's getting late and they want music means play_sound sound=music "
             "and dim_lights together. "
-            "If it says they fell, can't get up, or need help, call alert_caregiver and nothing else. "
-            "'Help me find my keys' is a request to find keys, not a fall.",
+            "'Help me find my keys' or 'help me get a bottle of water' is a request, not a fall. "
+            "Do not call alert_caregiver. You cannot text the caregiver.",
             f"- Typed: {said}",
             (
                 f'Fluffy just asked: "{asked.strip()}". The person answered: "{answer.strip()}".'
@@ -706,9 +709,8 @@ def _user_text(
             "or \"Should I dim the lights and put on music?\". "
             "Use the words they said. Do not describe what you saw. "
             "If the transcript asks for one thing or several, call every tool it needs in this turn. "
-            "If someone fell, is down on the floor, or looks hurt, or the transcript says they fell, "
-            "can't get up, or need help, or there is a thud and the person is out of view or not "
-            "clearly okay, call alert_caregiver and nothing else. The app asks before calling anyone. "
+            "If someone fell or asked for a bottle of water, do not text anyone. "
+            "A request is a request. Falls are handled outside this call. "
             "If nothing in the picture or the transcript needs a change, call no tools.",
         ]
     )

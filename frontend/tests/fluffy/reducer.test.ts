@@ -198,4 +198,62 @@ describe("session reducer", () => {
     expect(state.turns.map((turn) => turn.requestId)).toEqual(["req_one", "req_two"]);
     expect(new Set(state.turns.map((turn) => turn.id)).size).toBe(2);
   });
+
+  it("confirms a dim only after a verified result and leaves a failure unchanged", () => {
+    let state = fromRaw({
+      type: "plan.proposed",
+      plan: {
+        plan_id: "pln_1",
+        intent: "Dim the floor lamp",
+        actions: [{ action_id: "act_1", tool: "dim_lights", args: { room: "living_room", light: "lamp.living_floor", luminosity: 30 } }],
+        confidence: 0.9,
+        trigger: { kind: "spoken", room: "living_room" },
+        consent: { required: true },
+      },
+    });
+    expect(state.actions.act_1.status).toBe("proposed");
+    expect(state.home.lights["lamp.living_floor"]).toBeUndefined();
+    state = reduceSession(state, { type: "plan.decision", planId: "pln_1", decision: "approved", reason: "yes" }, { now: NOW });
+    expect(state.actions.act_1.status).toBe("approved");
+    expect(state.home.known).toBe(false);
+    state = reduceSession(state, { type: "action", actionId: "act_1", status: "started" }, { now: NOW });
+    expect(state.actions.act_1.status).toBe("started");
+    expect(state.home.lights["lamp.living_floor"]).toBeUndefined();
+    const verified = reduceSession(
+      state,
+      {
+        type: "plan.result",
+        planId: "pln_1",
+        status: "succeeded",
+        results: [{ actionId: "act_1", rawStatus: "ok", newState: { luminosity: { "lamp.living_floor": 30 } }, providerConfirmed: true }],
+      },
+      { now: NOW },
+    );
+    expect(verified.actions.act_1.status).toBe("verified");
+    expect(verified.home.lights["lamp.living_floor"].luminosity).toBe(30);
+    const failed = reduceSession(
+      state,
+      {
+        type: "plan.result",
+        planId: "pln_1",
+        status: "failed",
+        results: [{ actionId: "act_1", rawStatus: "error", error: "rejected", newState: { luminosity: { "lamp.living_floor": 30 } } }],
+      },
+      { now: NOW },
+    );
+    expect(failed.actions.act_1.status).toBe("failed");
+    expect(failed.home.lights["lamp.living_floor"]).toBeUndefined();
+    const skipped = reduceSession(
+      state,
+      {
+        type: "plan.result",
+        planId: "pln_1",
+        status: "cancelled",
+        results: [{ actionId: "act_1", rawStatus: "skipped", newState: { luminosity: { "lamp.living_floor": 30 } } }],
+      },
+      { now: NOW },
+    );
+    expect(skipped.actions.act_1.status).toBe("failed");
+    expect(skipped.home.lights["lamp.living_floor"]).toBeUndefined();
+  });
 });

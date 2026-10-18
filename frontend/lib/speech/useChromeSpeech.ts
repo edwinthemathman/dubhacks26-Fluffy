@@ -45,9 +45,12 @@ export function useChromeSpeech(
   const statusRef = useRef(onStatus);
   const speakingRef = useRef(isSpeaking);
   const phraseRef = useRef("");
-  finalRef.current = onFinal;
-  statusRef.current = onStatus;
-  speakingRef.current = isSpeaking;
+
+  useEffect(() => {
+    finalRef.current = onFinal;
+    statusRef.current = onStatus;
+    speakingRef.current = isSpeaking;
+  }, [onFinal, onStatus, isSpeaking]);
 
   useEffect(() => {
     if (!enabled) {

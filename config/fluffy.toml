@@ -1,0 +1,12 @@
+# Deterministic safety thresholds. The model never raises these.
+
+[safety]
+checkin_min_confidence = 0.85
+fall_dwell_s = 20
+scene_min_confidence = 0.7
+alert_min_confidence = 0.9
+checkin_cooldown_s = 600
+on_floor_weight = 0.6
+eyes_closed_weight = 0.2
+no_speech_weight = 0.1
+strong_phrase_weight = 0.9

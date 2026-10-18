@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from fluffy.brain.wellbeing import is_okay_phrase, is_request, is_strong_phrase
 from fluffy.config import HomeConfig
 from fluffy.ids import new_id
 from fluffy.models.contracts import PossibleFallEvent
@@ -22,12 +23,16 @@ _HELP = re.compile(r"^(please\s+)?(help me|i need help|help)(\s+please)?$")
 
 def classify_reply(text: str) -> str:
     normalized = " ".join(text.strip().lower().replace("\u2019", "'").replace(".", "").split())
+    if is_request(normalized):
+        return "okay"
     if _NOT_OKAY.search(normalized):
         return "ambiguous"
-    if _OKAY.fullmatch(normalized):
+    if is_okay_phrase(normalized) or _OKAY.fullmatch(normalized):
         return "okay"
-    if _HELP.fullmatch(normalized):
+    if is_strong_phrase(normalized) or _HELP.fullmatch(normalized):
         return "help"
+    if len(normalized.split()) >= 4:
+        return "okay"
     return "ambiguous"
 
 

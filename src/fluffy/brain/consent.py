@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Literal
 
 from fluffy.brain.arbiter import LOW_CONFIDENCE, Arbiter
-from fluffy.brain.cues import build_help_plan, help_question, judge
+from fluffy.brain.cues import build_help_plan, judge
 from fluffy.brain.habits import HabitBook
 from fluffy.clock import Clock
 from fluffy.models import Consent, Plan
@@ -65,11 +65,11 @@ class ConsentManager:
         cues: set[str] | None = None,
     ) -> ConsentUpdate:
         decision = judge(scene, plan, cues)
-        if decision == "ask_for_help":
-            return self._ask(
-                _held_help_plan(plan, profile, self.clock),
-                profile,
-                question=help_question(profile),
+        if decision == "ask_for_help" or _calls_alert(plan):
+            return ConsentUpdate(
+                status="dropped",
+                plan=plan,
+                reason="considered/blocked: the safety check-in owns caregiver texts",
             )
 
         if (
@@ -277,6 +277,10 @@ def classify_yes_no(text: str) -> bool | None:
     if said_no:
         return False
     return None
+
+
+def _calls_alert(plan: Plan) -> bool:
+    return any(action.tool == "alert_caregiver" for action in plan.actions)
 
 
 def _must_ask(plan: Plan) -> bool:
