@@ -59,6 +59,7 @@ export function createSession(sessionId = "local"): SessionState {
     stage: null,
     thinking: [],
     lastSeen: null,
+    raw: null,
     observationPending: false,
     notice: null,
     inputAccepted: false,
@@ -238,6 +239,8 @@ function apply(state: SessionState, event: CanonicalEvent, now: number, historic
       });
     case "notice":
       return { ...state, notice: event.text };
+    case "perception":
+      return { ...state, raw: event.text };
     case "recorded.confirm":
       return {
         ...state,

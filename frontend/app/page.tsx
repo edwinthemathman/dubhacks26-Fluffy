@@ -35,7 +35,7 @@ export default function Home() {
   const plan = latest?.planId ? session.state.plans[latest.planId] : undefined;
   const actions = (latest?.actionIds ?? []).map((id) => session.state.actions[id]).filter((item) => item != null);
   const busyLabel = session.stageLabel;
-  const showThinking = (Boolean(busyLabel) || session.state.thinking.length > 0 || Boolean(session.state.lastSeen)) && !latest?.recorded;
+  const showThinking = (Boolean(busyLabel) || session.state.thinking.length > 0 || Boolean(session.state.lastSeen) || Boolean(session.state.raw)) && !latest?.recorded;
   const typewriter = useTypewriter(EXAMPLE_CUES, { active: session.draft.length === 0 && !session.recordedDemo });
   const placeholder = session.recordedDemo ? "Try a recorded line, like “ugh, it's bright”" : typewriter.text + (typewriter.cursor ? "|" : "");
 
@@ -117,6 +117,13 @@ export default function Home() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => session.saveMoment()}
+                  className="h-9 rounded-xl border border-neutral-200 px-3 text-xs font-medium text-neutral-500"
+                >
+                  Save this moment
+                </button>
+                <button
+                  type="button"
                   aria-pressed={session.recordedDemo}
                   onClick={() => session.setRecordedDemo(!session.recordedDemo)}
                   className={
@@ -163,6 +170,12 @@ export default function Home() {
                 ) : null}
                 {session.state.lastSeen ? (
                   <p className={"text-sm text-neutral-600 " + (session.state.thinking.length ? "mb-3" : "")}>{session.state.lastSeen}</p>
+                ) : null}
+                {session.state.raw ? (
+                  <details className="mb-3">
+                    <summary className="cursor-pointer text-xs font-medium text-neutral-400">Raw</summary>
+                    <pre className="mt-1 whitespace-pre-wrap text-left text-xs leading-5 text-neutral-600">{session.state.raw}</pre>
+                  </details>
                 ) : null}
                 {session.state.thinking.map((step) => (
                   <div key={step.label} className="mb-3 last:mb-0">

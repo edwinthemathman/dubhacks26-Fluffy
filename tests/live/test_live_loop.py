@@ -22,7 +22,7 @@ from tests.inference.helpers import profiles
 EVENT_TYPES = {
     "state", "profile", "turn.start", "sense.see", "sense.hear", "think", "tool.call",
     "tool.status", "ask", "ask.answer", "say", "turn.end", "turn.raw", "safety", "fallback",
-    "phone",
+    "phone", "perception", "still",
 }
 
 CALM = SceneState(people=[PersonState(posture="sitting", location_surface="sofa", eyes="open")], summary="sitting")
@@ -46,6 +46,7 @@ class FakePerceiver:
         self.asked: str | None = None
         self.choices: list[str] | None = None
         self.device: list[str] = []
+        self.meta: list = []
         self.scene_calls = 0
         self.sound_calls = 0
         self.windows: list = []
@@ -92,6 +93,7 @@ class FakePerceiver:
             await self.decide_gate.wait()
         return Decision(
             device=[parse_call(name, args) for name, args in self.device],
+            meta=list(self.meta),
             asked=self.asked,
             choices=self.choices,
             ms=800,

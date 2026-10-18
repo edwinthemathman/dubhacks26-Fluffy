@@ -193,6 +193,7 @@ export type SessionState = {
   stage: string | null;
   thinking: { label: string; text: string }[];
   lastSeen: string | null;
+  raw: string | null;
   observationPending: boolean;
   notice: string | null;
   inputAccepted: boolean;
@@ -259,4 +260,5 @@ export type CanonicalEvent = StreamMeta &
       }
     | { type: "recorded.confirm"; requestId: string }
     | { type: "notice"; text: string | null }
+    | { type: "perception"; text: string }
   );

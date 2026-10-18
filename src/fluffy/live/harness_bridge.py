@@ -126,7 +126,7 @@ class HarnessPerception:
             if asyncio.iscoroutine(result):
                 await result
 
-    def accept_frame(self, *, session_id: str, epoch: int, ts_ms: int, motion: float, jpeg_base64: str) -> tuple[int, dict]:
+    def accept_frame(self, *, session_id: str, epoch: int, ts_ms: int, motion: float, jpeg_base64: str, still: bool = False) -> tuple[int, dict]:
         if session_id != self.settings.session_id:
             self.stats.frames_rejected += 1
             return 400, {"error_code": "invalid_arguments", "message": "session mismatch"}
@@ -147,7 +147,7 @@ class HarnessPerception:
             return 400, {"error_code": "invalid_arguments", "message": "frame is not a JPEG within the size limit"}
         self._last_epoch = epoch
         self.loop.capture_epoch = epoch
-        self.loop.on_frame(ts_ms, jpeg, motion)
+        self.loop.on_frame(ts_ms, jpeg, motion, still=still)
         self.stats.frames_received += 1
         return 202, {"status": "accepted", "analyzed": False, "frames": len(self.loop.frames.frames)}
 

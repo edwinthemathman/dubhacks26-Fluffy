@@ -99,5 +99,8 @@ These are the gesture clips for the deeper guess (face and pockets, cough, cuppe
 - No real fall has been tested on a live camera yet. Try it on the Demo page with a mat.
 - The home state is in memory. The real executor plugs into `LiveLoop._run_plan`.
 
+## Perceptron log
+Every scene read, decision, and locate call appends one line to `logs/perception.jsonl` (frame count, raw text, parsed objects, tool calls, and whether a call was kept). The Raw drawer on the home page shows the latest of those. Save this moment writes `logs/moments/<time>/`.
+
 ## Object check
 `scripts/check_objects.py` prints the layout to score: glasses on the left of the side table, keys on the right of the counter, phone in hand, cup on the coffee table, remote on the sofa. The camera pass has not been run.

@@ -231,6 +231,36 @@ export class CaptureController {
     }, FRAME_MS);
   }
 
+  grabStill(): void {
+    const video = this.video;
+    if (!video || video.readyState < 2 || !this.sending) return;
+    const settings = this.stream?.getVideoTracks()[0]?.getSettings() ?? {};
+    const width = 1280;
+    const aspect = (settings.height ?? 720) / (settings.width ?? 1280);
+    const frame = document.createElement("canvas");
+    frame.width = width;
+    frame.height = Math.max(2, Math.round((width * aspect) / 2) * 2);
+    const context = frame.getContext("2d");
+    if (!context) return;
+    context.drawImage(video, 0, 0, frame.width, frame.height);
+    frame.toBlob((blob) => {
+      if (!blob) return;
+      void blob.arrayBuffer().then((jpeg) => {
+        const bytes = new Uint8Array(jpeg);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+        void postJson(mediaFrameUrl(this.config), {
+          session_id: this.sessionId,
+          epoch: this.epoch,
+          ts_ms: Date.now(),
+          motion: 0,
+          still: true,
+          jpeg_base64: btoa(binary),
+        });
+      });
+    }, "image/jpeg", 0.85);
+  }
+
   private sendFrame(epoch: number, ts: number, motion: number, jpeg: ArrayBuffer): void {
     if (this.config.contract === "legacy-live") {
       const socket = this.socket;

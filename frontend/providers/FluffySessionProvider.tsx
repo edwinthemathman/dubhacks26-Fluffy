@@ -30,6 +30,7 @@ type SessionApi = {
   now: number;
   submitText: () => Promise<void>;
   scanRoom: () => void;
+  saveMoment: () => void;
   answerQuestion: (choice: string) => Promise<void>;
   confirmRecorded: (requestId: string) => void;
   startFluffy: () => Promise<void>;
@@ -159,6 +160,9 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
       socket.onmessage = (message) => {
         const raw = parseMessage(message.data);
         if (raw == null) return;
+        if (typeof raw === "object" && raw && (raw as { type?: string }).type === "still") {
+          captureRef.current?.grabStill();
+        }
         buffer.push(raw);
         window.clearTimeout(timer);
         timer = window.setTimeout(() => {
@@ -386,6 +390,9 @@ export function FluffySessionProvider({ children }: { children: ReactNode }) {
     submitText,
     scanRoom: () => {
       socketRef.current?.send(JSON.stringify({ type: "room.scan" }));
+    },
+    saveMoment: () => {
+      socketRef.current?.send(JSON.stringify({ type: "moment.save" }));
     },
     answerQuestion,
     confirmRecorded: (requestId) => apply({ type: "recorded.confirm", requestId }),

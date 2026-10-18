@@ -98,7 +98,27 @@ function parse(type: string, event: Record<string, unknown>, ctx: NormalizeConte
     return [{ type: "executor", connected: online, status }];
   }
   if (type === "caregiver.alert") return caregiverAlert(event, ctx.now);
+  if (type === "perception") return perception(event);
   return null;
+}
+
+function perception(event: Record<string, unknown>): CanonicalEvent[] {
+  const objects = Array.isArray(event.objects) ? event.objects.map((item) => String(item)) : [];
+  const actions = Array.isArray(event.actions) ? event.actions.map((item) => String(item)) : [];
+  const calls = Array.isArray(event.calls) ? event.calls : [];
+  const lines = [
+    `lane: ${asString(event.lane) ?? "read"}`,
+    objects.length ? `objects: ${objects.join("; ")}` : "",
+    actions.length ? `actions: ${actions.join(", ")}` : "",
+    ...calls.map((call) => {
+      const row = asRecord(call);
+      if (!row) return "";
+      const name = asString(row.name) ?? "call";
+      const kept = row.kept === false ? "dropped" : "kept";
+      return `${name} ${kept}`;
+    }),
+  ].filter(Boolean);
+  return [{ type: "perception", text: lines.join("\n") }];
 }
 
 function streamMeta(event: Record<string, unknown>): { dedupKey?: string; seq?: number; sessionId?: string } {

@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
+import re
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
@@ -38,6 +42,22 @@ from fluffy.live.perceive import Decision, Read, Window
 from fluffy.live.presence import RoomPresence
 from fluffy.live.verify import confirm, questions_for
 from fluffy.live.voice_policy import VoicePolicy
+
+_FIND = re.compile(
+    r"(?:where (?:is|are) my|find my|i can(?:no|')?t find(?: my)?)\s+([a-z][a-z0-9 '-]{0,40})",
+    re.I,
+)
+
+
+def _find_target(text: str) -> str | None:
+    match = _FIND.search(text.lower())
+    if match is None:
+        return None
+    name = match.group(1).strip(" ?.!,'\"")
+    for tail in (" please", " right now", " for me"):
+        if name.endswith(tail):
+            name = name[: -len(tail)].strip()
+    return name or None
 from fluffy.integrations import run_tool
 from fluffy.models import Action, Plan, Trigger
 from fluffy.notify.photon import notify_fall, notify_person
@@ -154,6 +174,9 @@ class PerceptronPerceiver:
 
     async def read_tags(self, window, *, profile=None):
         return await self._p.read_tags(self.client, window, profile=profile)
+
+    async def locate(self, window, *, name, memory=None, now=None):
+        return await self._p.locate(self.client, window, name, memory=memory, now=now)
 
     async def check(self, window, questions) -> dict[str, str]:
         """Ask each double-check question on the same frames, in parallel."""
@@ -323,6 +346,8 @@ class LiveLoop:
         self._upright_reads = 0
         self._player_checked = 0.0
         self._player_playing = False
+        self._scan_at = 0.0
+        self.still_frame: bytes | None = None
         self.capture_epoch = 0
         self.clap_played = False
         self.music_stopped = False
@@ -343,9 +368,11 @@ class LiveLoop:
     def now(self) -> float:
         return self.clock.now().timestamp()
 
-    def on_frame(self, ts_ms: int, jpeg: bytes, motion: float) -> None:
+    def on_frame(self, ts_ms: int, jpeg: bytes, motion: float, *, still: bool = False) -> None:
         if self.paused:
             return
+        if still:
+            self.still_frame = jpeg
         now = self.now()
         self.frames.add(ts_ms, jpeg, motion, now)
         if motion >= self.s.motion_threshold:
@@ -373,7 +400,10 @@ class LiveLoop:
             text = str(message.get("text", "")).strip()
             if "scan the room" in text.lower():
                 self.want_scan = True
-            if text and not await self._answer_text(text, by="typing") and not self._spoken_volume(text):
+            target = _find_target(text)
+            if target and not await self._answer_text(text, by="typing"):
+                await self._locate_and_say(target, None)
+            elif text and not await self._answer_text(text, by="typing") and not self._spoken_volume(text):
                 self._request(
                     DecideRequest(
                         "spoken",
@@ -389,6 +419,8 @@ class LiveLoop:
             # #region agent log
             _agent_log("E", "loop.py:room.scan", "scan requested", {"frames": len(self.frames.frames), "paused": self.paused})
             # #endregion
+        elif kind == "moment.save":
+            self._save_moment()
         elif kind == "speech":
             await self._heard_speech(str(message.get("text", "")), confidence=message.get("confidence"))
         elif kind == "profile.set" and message.get("profile") in self.profiles:
@@ -511,10 +543,19 @@ class LiveLoop:
             and self._budget()
         ):
             self.want_scan = False
+            self._scan_at = now
             # #region agent log
             _agent_log("E", "loop.py:tick", "scan starting", {"frames": len(self.frames.frames)})
             # #endregion
             self._start("scan", self._scan())
+        elif (
+            self._scan_at
+            and self.scene is not None
+            and self.scene.people
+            and now - self._scan_at > 60
+            and self._idle("scan")
+        ):
+            self.want_scan = True
         if self.pending is not None and self._idle("decide"):
             request = self.pending
             self.pending = self._later_request
@@ -649,6 +690,7 @@ class LiveLoop:
         scene = _clap_not_impact(scene)
         self.scene = scene
         self._notice_scene_gesture(scene)
+        self._emit_perception("scene")
         presence = self.presence.observe(scene, self.now(), self.profile.agreements.person_name)
         self.room_change = presence.room_change
         cues = self._scene_cues(scene, presence.cues)
@@ -1338,6 +1380,10 @@ class LiveLoop:
         self.emit({"type": "sense.hear", "text": text})
         if await self._answer_text(text, by="voice"):
             return
+        target = _find_target(text)
+        if target:
+            await self._locate_and_say(target, None)
+            return
         if wants_music_stop(text) and self._music_on() and not self.music_stopped:
             self._stop_music()
             return
@@ -1350,6 +1396,91 @@ class LiveLoop:
 
     def _recent_speech(self) -> bool:
         return self.now() - self.speech_at < 8
+
+    async def _locate_and_say(self, name: str, turn_id: str | None) -> None:
+        """A fresh tag is spoken at once. Otherwise one targeted look, preferring a still frame."""
+        recall = self.world.objects.recall(name, self.clock.now())
+        fresh = (
+            recall.status == "fresh"
+            and recall.last_seen_at is not None
+            and (self.clock.now() - recall.last_seen_at).total_seconds() <= 120
+            and bool(recall.location_desc)
+        )
+        if fresh:
+            from fluffy.brain.instincts import place_phrase, speakable
+
+            sentence = speakable(f"Your {name} are {place_phrase(recall.location_desc, recall.side, 'unclear')}.")
+        else:
+            finder = getattr(self.perceiver, "locate", None)
+            window = None
+            if finder is not None:
+                self.still_frame = None
+                self.emit({"type": "still"})
+                deadline = time.perf_counter() + 0.4
+                while self.still_frame is None and time.perf_counter() < deadline:
+                    await asyncio.sleep(0.05)
+                window = self._still_window() or self._window(self.s.decide_span_s, self.s.decide_frames)
+            if finder is not None and window is not None:
+                located = await finder(window, name=name, memory=self.world.objects, now=self.clock.now())
+                sentence = located.sentence
+            else:
+                from fluffy.live.perceive import _miss_line
+
+                sentence = _miss_line(name, self.world.objects, self.clock.now())
+        self._say(turn_id, sentence, voice=True)
+        self.emit({"type": "perception", "lane": "locate", "objects": [f"{name}: {sentence}"], "actions": [], "calls": [{"name": "find_object", "args": {"name": name}, "kept": True}]})
+
+    def _still_window(self) -> Window | None:
+        jpeg = self.still_frame
+        if not jpeg:
+            return None
+        return Window(frames=[(jpeg, 0), (jpeg, 400)], seconds=0.4, ended_at=self.now())
+
+    async def _run_meta(self, turn_id: str, calls: list) -> None:
+        for call in calls:
+            if call.name == "find_object":
+                await self._locate_and_say(str(call.args.get("name") or "that"), turn_id)
+            elif call.name == "describe_scene":
+                summary = self.scene.summary.strip() if self.scene is not None else ""
+                self._say(turn_id, summary or "I don't have a clear view of the room right now.", voice=True)
+            elif call.name == "read_text":
+                text = self.scene.text_present if self.scene is not None else None
+                self._say(turn_id, text or "I don't see any writing from here.", voice=True)
+            elif call.name == "look":
+                question = str(call.args.get("question") or "What do you see?")
+                self._say(turn_id, self.scene.summary.strip() if self.scene and self.scene.summary else question, voice=False)
+            else:
+                self.emit({"type": "think", "turn_id": turn_id, "note": f"dropped {call.name}"})
+
+    def _emit_perception(self, lane: str, result: Decision | None = None) -> None:
+        objects: list[str] = []
+        actions: list[str] = []
+        if self.scene is not None:
+            objects = [f"{item.name}: {item.location_desc}" for item in self.scene.objects_seen]
+            for person in self.scene.people:
+                actions.extend(item.label for item in person.actions)
+        calls: list[dict] = []
+        if result is not None:
+            calls.extend({"name": call.name, "args": call.args, "kept": True} for call in [*result.meta, *result.device])
+            calls.extend({"name": item, "args": {}, "kept": False, "why": "rejected"} for item in result.rejected)
+        self.emit({"type": "perception", "lane": lane, "objects": objects, "actions": actions, "calls": calls})
+
+    def _save_moment(self) -> None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        folder = Path("logs/moments") / stamp
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        window = self._window(self.s.decide_span_s, self.s.decide_frames)
+        frames = window.frames if window is not None else []
+        for index, (jpeg, ts) in enumerate(frames):
+            (folder / f"frame_{index}_{ts}.jpg").write_bytes(jpeg)
+        if window is not None and window.wav:
+            (folder / "audio.wav").write_bytes(window.wav)
+        scene = self.scene.model_dump() if self.scene is not None else None
+        (folder / "read.json").write_text(json.dumps({"scene": scene}, default=str), encoding="utf-8")
+        self.emit({"type": "think", "note": f"saved moment {stamp}"})
 
     def _open_question(self) -> str | None:
         if self.safety.phase in {"checkin", "checkin_repeat"}:
@@ -1497,6 +1628,7 @@ class LiveLoop:
             self._end(turn_id, started, "nothing", note="perceptron error")
             log.warning("decide failed: %s", result.error)
             return
+        self._emit_perception("decide", result)
         if self.delegate_execution:
             self.emit(
                 {
@@ -1550,6 +1682,13 @@ class LiveLoop:
                 snapshot_id=f"live_{turn_id}",
             )
             reasons = {action.tool: habit_why(habit) for action in plan.actions}
+        if plan is None and result.meta:
+            await self._run_meta(turn_id, result.meta)
+            if result.asked and "left_room" not in request.cues:
+                self._ask_user(turn_id, started, request, result.asked, result.choices)
+                return
+            self._end(turn_id, started, "acted", note="looked where they asked")
+            return
         if plan is None:
             if result.asked and "left_room" not in request.cues:
                 self._ask_user(turn_id, started, request, result.asked, result.choices)

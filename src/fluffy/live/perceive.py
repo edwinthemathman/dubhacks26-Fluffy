@@ -18,6 +18,8 @@ from perceptron import AsyncClient, SDKError, pydantic_format, video_frames
 from perceptron import audio as audio_part
 
 from fluffy.brain.decide import _asked, _asked_choices, _split, system_prompt
+from fluffy.brain.instincts import place_phrase, speakable
+from fluffy.live.perception_log import record as _record
 from fluffy.demo.analyze import (
     MODEL,
     SOUND_PROMPT,
@@ -72,11 +74,24 @@ class Read:
 
 
 @dataclass
+class Located:
+    """Where one named object is, from memory or from a targeted look."""
+
+    name: str
+    seen: bool
+    sentence: str
+    surface: str = ""
+    side: str = "unclear"
+    from_memory: bool = False
+
+
+@dataclass
 class Decision:
     reply: str = ""
     asked: str | None = None
     choices: list[str] | None = None
     device: list[ParsedCall] = field(default_factory=list)
+    meta: list[ParsedCall] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
     rounds: int = 0
     ms: int = 0
@@ -123,7 +138,9 @@ async def read_scene(
     except SDKError as exc:
         return Read(error=_safe_error(exc), ms=_ms(started))
     scene, error = _parse_model(completion.text, SceneState, "Scene read")
-    return Read(value=scene, error=error, ms=_ms(started), usage=_usage(completion), thinking=_thinking(getattr(completion, "reasoning", None)))
+    read = Read(value=scene, error=error, ms=_ms(started), usage=_usage(completion), thinking=_thinking(getattr(completion, "reasoning", None)))
+    _log_call("scene", window, completion.text, _scene_parsed(scene), [], read.ms)
+    return read
 
 
 async def read_tags(client: AsyncClient, window: Window, *, profile: Profile | None = None) -> Read:
@@ -410,6 +427,7 @@ async def decide_text(
 async def _once(client: AsyncClient, messages: list[Any], tools: list[dict], effort: str, max_tokens: int) -> Decision:
     """A single completion. Meta tools do not open another round."""
 
+    started = time.perf_counter()
     result = Decision()
     try:
         completion = await client.chat.completions.create(
@@ -439,10 +457,100 @@ async def _once(client: AsyncClient, messages: list[Any], tools: list[dict], eff
     if asked_now:
         result.asked = asked_now
         result.choices = _asked_choices(meta)
+    result.meta = [call for _, call in meta if call.name not in {"ask_user", "confirm_plan"}]
     result.device = device
     if device:
         result.confidence = min(call.confidence for call in device)
+    calls = [{"name": call.name, "args": call.args, "kept": True} for call in [*result.meta, *device]]
+    calls.extend({"name": item, "args": {}, "kept": False, "why": "rejected"} for item in bad)
+    _log_call("decide", None, completion.text, {}, calls, _ms(started))
     return result
+
+
+async def locate(client: AsyncClient, window: Window, name: str, *, memory: Any = None, now: Any = None) -> Located:
+    """One object, not the whole scene. Memory answers if it was seen in the last 2 minutes."""
+
+    from datetime import timedelta
+
+    label = name.strip() or "that"
+    if memory is not None and now is not None:
+        recall = memory.recall(label, now)
+        if (
+            recall.status == "fresh"
+            and recall.last_seen_at is not None
+            and now - recall.last_seen_at <= timedelta(minutes=2)
+            and recall.location_desc
+        ):
+            sentence = speakable(f"Your {label} are {place_phrase(recall.location_desc, recall.side, 'unclear')}.")
+            return Located(label, True, sentence, recall.location_desc, recall.side, from_memory=True)
+    visible = await ask_frames(client, window, f"Is a {label} visible in any of these frames?", "yes|no|unclear")
+    if visible.value != "yes":
+        return Located(label, False, _miss_line(label, memory, now))
+    side_read = await ask_frames(
+        client,
+        window,
+        f"In any of these frames, which side of the picture is the {label} on?",
+        "left|middle|right|unclear",
+    )
+    surface_read = await ask_frames(
+        client,
+        window,
+        f"In any of these frames, what is the {label} resting on?",
+        "side table|counter|coffee table|sofa|floor|hand|none",
+    )
+    side = side_read.value if side_read.value in {"left", "middle", "right"} else "unclear"
+    surface = surface_read.value if surface_read.value and surface_read.value != "none" else ""
+    if surface == "hand":
+        place = "in their hand"
+        held = True
+    elif surface:
+        place = f"on the {surface}" if not surface.startswith("on ") else surface
+        held = False
+    else:
+        place = "in the room"
+        held = False
+    if memory is not None and now is not None:
+        from fluffy.perception.scene import ObjectSighting
+
+        memory.note_live(
+            [ObjectSighting(name=label, location_desc=place, side=side if side != "unclear" else "unclear", with_person=held)],
+            now,
+        )
+    where = "in their hand" if held else place_phrase(place, side, "unclear")
+    sentence = speakable(f"Your {label} are {where}.")
+    _log_call("locate", window, visible.value, {"name": label, "surface": surface, "side": side}, [], visible.ms)
+    return Located(label, True, sentence, place, side)
+
+
+def _miss_line(name: str, memory: Any, now: Any) -> str:
+    if memory is None or now is None:
+        return speakable(f"I can't see your {name} from here. Could you look around the sofa?")
+    recall = memory.recall(name, now)
+    if recall.status == "unknown" or not recall.location_desc:
+        return speakable(f"I can't see your {name} from here. Could you look around the sofa?")
+    age = 0
+    if recall.last_seen_at is not None:
+        age = max(1, int((now - recall.last_seen_at).total_seconds() // 60))
+    return speakable(
+        f"I don't see your {name} right now. I last saw them {recall.location_desc} about {age} minutes ago."
+    )
+
+
+def _scene_parsed(scene: Any) -> dict[str, Any]:
+    if scene is None:
+        return {}
+    return {
+        "people": len(getattr(scene, "people", []) or []),
+        "objects": [item.name for item in getattr(scene, "objects_seen", []) or []],
+        "sounds": list(getattr(scene, "sounds", []) or []),
+    }
+
+
+def _log_call(lane: str, window: Window | None, raw: str | None, parsed: dict[str, Any], calls: list[dict[str, Any]], ms: int) -> None:
+    sent = {"frames": 0, "seconds": 0, "audio": False}
+    if window is not None:
+        sent = {"frames": len(window.frames), "seconds": window.seconds, "audio": window.wav is not None}
+    _record(lane=lane, sent=sent, raw=raw, parsed=parsed, calls=calls, ms=ms)
 
 
 def _ms(started: float) -> int:

@@ -18,3 +18,4 @@ node_modules/
 .spotify_token
 data/spotify_oauth.json
 data/*.sqlite
+logs/

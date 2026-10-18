@@ -70,6 +70,7 @@ class FrameBody(BaseModel):
     ts_ms: int
     motion: float = 0
     jpeg_base64: str
+    still: bool = False
 
 
 class AudioBody(BaseModel):
@@ -285,6 +286,7 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
             ts_ms=body.ts_ms,
             motion=body.motion,
             jpeg_base64=body.jpeg_base64,
+            still=body.still,
         )
         return JSONResponse(status_code=status, content=payload)
 
@@ -508,7 +510,7 @@ def create_harness_app(settings: RuntimeSettings | None = None, runtime: Runtime
                     message = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(message, dict) and message.get("type") in {"room.scan", "typed", "answer", "speech"}:
+                if isinstance(message, dict) and message.get("type") in {"room.scan", "typed", "answer", "speech", "moment.save"}:
                     await perception.loop.on_client(message)
         except WebSocketDisconnect:
             runtime.ui_clients.discard(socket)
