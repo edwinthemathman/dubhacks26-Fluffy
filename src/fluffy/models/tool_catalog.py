@@ -200,6 +200,7 @@ SPECS: dict[str, ToolSpec] = {
         _spec(
             "play_sound",
             "Play a sound in the room. Use music when they ask for music. "
+            "volume, from 0 to 100, is Spotify's volume. "
             "Use rain, white_noise, or chime for sleep or a soft background. "
             "Call this in the same turn as dim_lights or another comfort tool when the request asks for both.",
             "comfort",

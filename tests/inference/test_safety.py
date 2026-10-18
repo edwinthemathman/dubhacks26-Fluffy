@@ -110,6 +110,44 @@ def test_deaf_checkin_does_not_rely_on_speech():
     assert "speech" not in effects[0].plans[0].profile.delivered_via
 
 
+def test_distress_after_alert_starts_another_checkin():
+    clock = FrozenClock()
+    machine = SafetyMachine(clock, profiles()["blind"])
+    machine.on_event("possible_fall")
+    clock.advance(30)
+    machine.tick()
+    clock.advance(30)
+    assert machine.tick()[0].kind == "alert"
+    assert machine.on_event("possible_fall") == []
+    effects = machine.on_event("distress_call")
+    assert effects[0].kind == "checkin"
+    assert machine.phase == "checkin"
+
+
+def test_okay_after_alert_stands_down():
+    clock = FrozenClock()
+    machine = SafetyMachine(clock, profiles()["blind"])
+    machine.on_event("possible_fall")
+    clock.advance(30)
+    machine.tick()
+    clock.advance(30)
+    machine.tick()
+    assert machine.phase == "alerted"
+    cleared = machine.on_answer("I'm okay")
+    assert cleared[0].kind == "cleared"
+    assert machine.phase == "idle"
+    assert machine.on_event("possible_fall")[0].kind == "checkin"
+
+
+def test_stand_down_ends_the_incident():
+    clock = FrozenClock()
+    machine = SafetyMachine(clock, profiles()["blind"])
+    machine.on_event("possible_fall")
+    assert machine.stand_down()[0].kind == "cleared"
+    assert machine.phase == "idle"
+    assert machine.stand_down() == []
+
+
 def test_distress_during_watch_starts_a_new_checkin():
     clock = FrozenClock()
     machine = SafetyMachine(clock, profiles()["blind"])

@@ -1,8 +1,21 @@
+import { useEffect, useRef, useState } from "react";
 import type { HomeState } from "../../stream/events";
 import styles from "./Room.module.css";
 
-export function Room({ home }: { home: HomeState }) {
+export function Room({ home, onVolume }: { home: HomeState; onVolume?: (volume: number) => void }) {
   const glow = Math.max(0.08, home.lamp.luminosity / 100);
+  const [volume, setVolume] = useState(home.speaker.volume);
+  const dragging = useRef(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!dragging.current) setVolume(home.speaker.volume);
+  }, [home.speaker.volume]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const sendVolume = (next: number) => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => onVolume?.(next), 180);
+  };
   const shade = home.lamp.warmth === "cool" ? "#9ec4ff" : home.lamp.warmth === "neutral" ? "#d5e6ff" : "#eef4ff";
   const slatShift = (100 - home.blinds) * 0.42;
 
@@ -49,6 +62,31 @@ export function Room({ home }: { home: HomeState }) {
         <span>{home.speaker.track ?? (home.speaker.sound ? home.speaker.sound : "Quiet")}</span>
         <span>{home.phone.mode ? `${home.phone.mode}${home.phone.to ? ` ${home.phone.to}` : ""}` : "Phone idle"}</span>
       </figcaption>
+      <label className={styles.volume}>
+        Volume {volume}%
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={volume}
+          aria-label="Spotify volume"
+          onPointerDown={() => {
+            dragging.current = true;
+          }}
+          onPointerUp={(event) => {
+            dragging.current = false;
+            const next = Number(event.currentTarget.value);
+            window.clearTimeout(timer.current);
+            setVolume(next);
+            onVolume?.(next);
+          }}
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            setVolume(next);
+            sendVolume(next);
+          }}
+        />
+      </label>
       {(home.caption || home.flash.active) && (
         <p className={styles.caption} role="status">
           {home.caption ?? `Lights pulse ${home.flash.color ?? "blue"}`}

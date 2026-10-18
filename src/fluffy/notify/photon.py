@@ -19,6 +19,8 @@ log = logging.getLogger("fluffy.notify.photon")
 
 API_BASE = "https://api.photon.codes"
 DEFAULT_HELP = "Someone needs help in the living room."
+ALERT_TO = "+14252686992"
+ALERT_TEXT = "Edwin needs help! He fell down."
 
 _shared: PhotonSms | None = None
 _logged_skip = False
@@ -47,7 +49,8 @@ class PhotonSms:
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key and self.project_id and self.from_number)
+        # A shared iMessage line is assigned by Photon. An SMS from-number is not required.
+        return bool(self.api_key and self.project_id)
 
     @classmethod
     def from_env(cls) -> PhotonSms:
@@ -57,9 +60,13 @@ class PhotonSms:
             os.environ.get("PHOTON_FROM", ""),
         )
 
+    def send(self, text: str | None = None, to: str | None = None) -> None:
+        """Text one number. Defaults keep the fall alert on the demo number."""
+        self.send_text(ALERT_TO if to is None else to, ALERT_TEXT if text is None else text)
+
     def send_text(self, to: str, text: str) -> None:
         """Text `to`. Raises PhotonError when Photon refuses the send."""
-        sender = self._user(self.from_number)
+        sender = self._user(self.from_number or self._line_for(to))
         recipient = self._user(to)
         space = self._space(sender, recipient, to)
         self._post(
@@ -72,8 +79,19 @@ class PhotonSms:
             idempotent=True,
         )
 
+    def _line_for(self, handle: str) -> str:
+        """The iMessage line that talks to this person. A dedicated line can be set in PHOTON_FROM."""
+        if self.from_number:
+            return self.from_number
+        page = self._get("platforms/imessage/assignments")
+        for row in page.get("assignments") or []:
+            if row.get("handle") == handle and not row.get("releasedAt"):
+                return str(row["assignedPhoneNumber"])
+        created = self._post("platforms/imessage/assignments", {"handle": handle})
+        return str(created["assignedPhoneNumber"])
+
     def _user(self, handle: str) -> str:
-        body = self._post("users", {"platform": "sms", "handle": handle})
+        body = self._post("users", {"platform": "imessage", "handle": handle})
         return str(body["id"])
 
     def _space(self, sender: str, recipient: str, handle: str) -> str:
@@ -82,7 +100,7 @@ class PhotonSms:
             return cached
         body = self._post(
             "spaces",
-            {"platform": "sms", "participantIds": [sender, recipient]},
+            {"platform": "imessage", "participantIds": [sender, recipient]},
             idempotent=True,
         )
         self._spaces[handle] = str(body["id"])
@@ -105,6 +123,19 @@ class PhotonSms:
             raise PhotonError(response.status_code, "response was not an object")
         return data
 
+    def _get(self, path: str) -> dict[str, Any]:
+        response = self._client.get(
+            f"{API_BASE}/v1/projects/{self.project_id}/{path}",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise PhotonError(response.status_code, response.text.replace("\n", " ")[:300])
+        data = response.json()
+        if not isinstance(data, dict):
+            raise PhotonError(response.status_code, "response was not an object")
+        return data
+
 
 def shared_sms() -> PhotonSms:
     global _shared
@@ -119,6 +150,20 @@ def plan_alerts(plan: Any) -> bool:
     return any(action.tool == "alert_caregiver" for action in plan.actions)
 
 
+def notify_person(text: str, sms: PhotonSms | None = None) -> bool:
+    """Text the person themselves. Quiet when PERSON_PHONE is unset."""
+    number = os.environ.get("PERSON_PHONE", "").strip()
+    sender = sms if sms is not None else shared_sms()
+    if not number or not text.strip() or not sender.configured:
+        return False
+    try:
+        sender.send_text(number, text)
+    except Exception as exc:
+        log.warning("person text failed: %s", exc)
+        return False
+    return True
+
+
 def notify_fall(
     message: str | None = None,
     sms: PhotonSms | None = None,
@@ -127,7 +172,8 @@ def notify_fall(
     """Text the caregiver. Missing setup or a Photon error does not raise."""
     global _logged_skip
     sender = sms or shared_sms()
-    handle = (to or os.environ.get("PHOTON_CAREGIVER_HANDLE") or "").strip()
+    handle = (to or os.environ.get("PHOTON_CAREGIVER_HANDLE") or ALERT_TO).strip()
+    body = message or (ALERT_TEXT if not to and not os.environ.get("PHOTON_CAREGIVER_HANDLE") else DEFAULT_HELP)
     if not sender.configured or not handle:
         if not _logged_skip:
             log.info(
@@ -136,7 +182,7 @@ def notify_fall(
             _logged_skip = True
         return False
     try:
-        sender.send_text(handle, message or DEFAULT_HELP)
+        sender.send_text(handle, body if message is None else message)
     except Exception as exc:
         log.warning("photon sms failed: %s", exc)
         return False

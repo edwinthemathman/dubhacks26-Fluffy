@@ -286,6 +286,16 @@
       } else if (body.scene_error) {
         parts.push(`<p class="hint">Scene read failed: ${escapeHtml(body.scene_error)}</p>`);
       }
+      const tags = body.tags || [];
+      if (tags.length) {
+        parts.push(`<p class="kicker">Tagged</p>`);
+        for (const tag of tags) {
+          parts.push(`<p>${escapeHtml(tag.name)} · ${escapeHtml(tag.where || "")}</p>`);
+        }
+      }
+      for (const notice of body.notices || []) {
+        parts.push(`<p class="question">Fluffy would tell them: ${escapeHtml(notice.text)}</p>`);
+      }
       if (outcome !== "quiet" && plan && plan.actions.length) {
         parts.push(`<p class="kicker">Proposed plan · ${escapeHtml(plan.action_class)} · ${Math.round(plan.confidence * 100)}%</p>`);
         for (const action of plan.actions) {

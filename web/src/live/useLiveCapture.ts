@@ -137,6 +137,9 @@ export function useLiveCapture(options?: { isSpeaking?: () => boolean }) {
       stop();
       setError(message);
       setStatus("error");
+      // #region agent log
+      fetch("http://127.0.0.1:7643/ingest/889f4935-7c87-40ef-88c8-e26de67696a8",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"9d207c"},body:JSON.stringify({sessionId:"9d207c",hypothesisId:"C",location:"useLiveCapture.ts:fail",message:"camera start failed",data:{name,message},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
     }
 
     function startFrames(stream: MediaStream, token: number) {

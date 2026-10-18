@@ -42,7 +42,17 @@ export function Companion() {
           {caption}
         </p>
         <div className={styles.actions}>
-          <button type="button" className={styles.yes} onClick={() => answer("yes")} disabled={!question}>
+          <button
+            type="button"
+            className={styles.yes}
+            onClick={() => {
+              // #region agent log
+              fetch("http://127.0.0.1:7643/ingest/889f4935-7c87-40ef-88c8-e26de67696a8",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"9d207c"},body:JSON.stringify({sessionId:"9d207c",hypothesisId:"D",location:"Companion.tsx:yes",message:"yes clicked",data:{hasQuestion:Boolean(question)},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
+              answer("yes");
+            }}
+            disabled={!question}
+          >
             Yes
           </button>
           <button type="button" className={styles.no} onClick={() => answer("no")} disabled={!question}>
@@ -62,6 +72,18 @@ export function Companion() {
           }}
         >
           Play Fluffy's voice here
+        </button>
+        <button
+          type="button"
+          className={styles.voice}
+          onClick={() => {
+            // #region agent log
+            fetch("http://127.0.0.1:7643/ingest/889f4935-7c87-40ef-88c8-e26de67696a8",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"9d207c"},body:JSON.stringify({sessionId:"9d207c",hypothesisId:"A",location:"Companion.tsx:scan",message:"scan clicked",data:{hasQuestion:Boolean(question),link:snapshot.link,tags:snapshot.senses.tags.length},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+            send({ type: "room.scan" });
+          }}
+        >
+          Scan the room
         </button>
         <form onSubmit={onSubmit} className={styles.form}>
           <label htmlFor="typed">Type instead</label>

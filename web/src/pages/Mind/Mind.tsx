@@ -74,6 +74,9 @@ export function Mind() {
               <Bell size={16} aria-hidden="true" />
               {hear}
             </p>
+            {snapshot.senses.tags.length ? (
+              <p className={styles.senses}>Tagged: {snapshot.senses.tags.map((tag) => `${tag.name} · ${tag.where}`).join(" · ")}</p>
+            ) : null}
           </div>
           <div className={styles.controls}>
             <div className="segment" role="group" aria-label="Scenes">

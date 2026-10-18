@@ -48,6 +48,8 @@ class Profile(BaseModel):
     questions: QuestionSettings
     agreements: Agreements
     vocabulary: list[str] = Field(default_factory=list)
+    important_objects: list[str] = Field(default_factory=list)
+    object_names: dict[str, str] = Field(default_factory=dict)
 
     def delivery_channels(self, *, safety: bool = False) -> list[str]:
         """Channels a message may use.

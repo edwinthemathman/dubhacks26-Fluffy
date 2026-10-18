@@ -13,6 +13,10 @@ vocabulary = [
     "sofa",
     "lamp",
 ]
+important_objects = ["wallet", "keys", "phone", "glasses", "hearing aids", "cane", "walker", "pill organizer"]
+
+[objects]
+"pill organizer" = "blue pill organizer"
 
 [output]
 speech = true

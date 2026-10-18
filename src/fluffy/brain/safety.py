@@ -29,8 +29,9 @@ SECOND_CHECKIN_S = 30
 ALERT_S = 60
 FOLLOWUP_S = 60
 WATCH_S = 5 * 60
+PAIN_TEXT_S = 15
 
-_OKAY = {"okay", "ok", "yes", "nod"}
+_OKAY = {"okay", "ok", "yes", "nod", "i'm okay", "im okay", "i am okay"}
 _HELP = {"help", "need help", "shake", "no"}
 
 
@@ -58,9 +59,11 @@ class SafetyMachine:
     def on_event(self, kind: str) -> list[SafetyEffect]:
         if kind not in {"possible_fall", "distress_call"}:
             return []
-        if self.phase in {"checkin", "checkin_repeat", "alerted"}:
+        # A fall that is still going does not start another check-in.
+        # Pain or a call for help does, even after the first incident alerted.
+        if kind == "possible_fall" and self.phase in {"checkin", "checkin_repeat", "alerted", "watching"}:
             return []
-        if self.phase == "watching" and kind == "possible_fall":
+        if kind == "distress_call" and self.phase in {"checkin", "checkin_repeat"}:
             return []
         self.phase = "checkin"
         self.started = self.clock.now()
@@ -70,9 +73,11 @@ class SafetyMachine:
         return [self._checkin(louder=False, pattern="pulse1")]
 
     def on_answer(self, raw: str) -> list[SafetyEffect]:
+        answer = _classify(raw)
+        if self.phase == "alerted" and answer == "okay":
+            return self.stand_down()
         if self.phase not in {"checkin", "checkin_repeat"}:
             return []
-        answer = _classify(raw)
         if answer == "okay":
             self.phase = "watching"
             self.watch_until = self.clock.now() + timedelta(seconds=WATCH_S)
@@ -109,6 +114,17 @@ class SafetyMachine:
         self.phase = "idle"
         self.next_checkin = None
         return [SafetyEffect(kind="cleared", text="Caregiver acknowledged.")]
+
+    def stand_down(self) -> list[SafetyEffect]:
+        """The incident is over. The next fall or pain can text again."""
+        if self.phase == "idle":
+            return []
+        self.phase = "idle"
+        self.started = None
+        self.watch_until = None
+        self.next_checkin = None
+        self.event_kind = None
+        return [SafetyEffect(kind="cleared", text="")]
 
     def _checkin(self, *, louder: bool, pattern: str) -> SafetyEffect:
         speech = self.profile.output.speech
@@ -219,7 +235,7 @@ class SafetyMachine:
 
 def _classify(raw: str) -> Literal["okay", "help"] | None:
     text = " ".join(raw.strip().lower().split())
-    if text in _OKAY:
+    if text in _OKAY or "i'm okay" in text or "im okay" in text or "i am okay" in text:
         return "okay"
     if text in _HELP:
         return "help"

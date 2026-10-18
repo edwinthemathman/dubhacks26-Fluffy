@@ -32,6 +32,11 @@ export function Demo() {
     speakingRef: speaking,
   });
   const camOn = live.status === "live" || live.status === "starting";
+  useEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7643/ingest/889f4935-7c87-40ef-88c8-e26de67696a8",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"9d207c"},body:JSON.stringify({sessionId:"9d207c",hypothesisId:"B",location:"Demo.tsx:state",message:"demo camera state",data:{scene:scene??null,status:live.status,error:live.error,link:snapshot.link,cameraDisabled:Boolean(scene)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }, [scene, live.status, live.error, snapshot.link]);
   const avatar = deriveAvatar(snapshot);
   const thinking = avatar === "thinking" || avatar === "seeing" || avatar === "hearing";
   const doneCount = countDone(snapshot.turns);
@@ -102,7 +107,13 @@ export function Demo() {
                   <button
                     type="button"
                     className={`pill ${styles.camButton}`}
-                    onClick={camOn ? live.stop : () => { voice.unlock(); void live.start(); }}
+                    onClick={camOn ? live.stop : () => {
+                      // #region agent log
+                      fetch("http://127.0.0.1:7643/ingest/889f4935-7c87-40ef-88c8-e26de67696a8",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"9d207c"},body:JSON.stringify({sessionId:"9d207c",hypothesisId:"B",location:"Demo.tsx:camera",message:"start camera clicked",data:{scene:scene??null,status:live.status,link:snapshot.link},timestamp:Date.now()})}).catch(()=>{});
+                      // #endregion
+                      voice.unlock();
+                      void live.start();
+                    }}
                     disabled={Boolean(scene)}
                     title={scene ? "Recorded runs don't use the camera" : undefined}
                   >
@@ -121,7 +132,7 @@ export function Demo() {
             </div>
           </section>
           <section className={`card ${styles.roomCard}`} aria-label="Fluffy's room">
-            <Room home={snapshot.home} />
+            <Room home={snapshot.home} onVolume={(volume) => send({ type: "volume.set", volume })} />
           </section>
           <section className={`card ${styles.calls}`} aria-label="Tool calls">
             <h2>Tool calls</h2>

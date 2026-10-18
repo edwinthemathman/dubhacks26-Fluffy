@@ -1,7 +1,7 @@
 """Cue policy. Vision leads; sound backs it up and breaks ties."""
 
 from fluffy.brain.consent import ConsentManager
-from fluffy.brain.cues import derive, judge
+from fluffy.brain.cues import derive, judge, volume_request, wants_music_stop
 from fluffy.clock import FrozenClock
 from fluffy.ids import IdFactory
 from fluffy.models import Action, Consent, Trigger, build_plan
@@ -291,6 +291,29 @@ def test_a_thud_while_someone_sits_fine_is_not_a_fall():
         sounds=["impact"],
     )
     assert "fall" not in derive(scene)
+
+
+def test_a_seen_or_heard_clap_is_clapping():
+    assert "clapping" in derive(_scene(PersonState(gesture="clapping", posture="standing")))
+    assert "clapping" in derive(_scene(sounds=["clap"]))
+    assert "clapping" not in derive(SceneState(summary="they clap their hands"))
+
+
+def test_a_raised_palm_or_the_word_stop_stops_the_music():
+    assert "stop_music" in derive(_scene(PersonState(gesture="stop", posture="standing")))
+    assert "stop_music" not in derive(SceneState(summary="they stop moving"))
+    spoken = SceneState(said="stop the music")
+    assert "stop_music" in derive(spoken)
+    assert wants_music_stop("stop")
+    assert not wants_music_stop("don't stop talking")
+
+
+def test_spoken_volume_is_up_down_or_a_number():
+    assert volume_request("turn it up") == {"op": "up"}
+    assert volume_request("a bit quieter please") == {"op": "down"}
+    assert volume_request("set the volume to 25") == {"op": "set", "level": 25}
+    assert volume_request("mute") == {"op": "mute"}
+    assert volume_request("turn the lights down") is None
 
 
 def test_decision_text_includes_the_transcript():
